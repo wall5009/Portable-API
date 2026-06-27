@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "portable_api_validation",
+  "version": "${version}",
+  "name": "Portable API Validation",
+  "description": "Blank validation consumer for Portable API.",
+  "license": "Apache-2.0",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.portablemc.validation.fabric1211.PortableValidationFabric1211"]
+  },
+  "depends": {
+    "fabricloader": ">=${fabric_loader}",
+    "minecraft": "${minecraft_version}",
+    "portable_api": ">=${version}"
+  }
+}

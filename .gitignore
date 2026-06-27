@@ -1,0 +1,13 @@
+.gradle/
+build/
+out/
+run/
+runs/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.log
+*.hprof
+/.idea/workspace.xml
+/.idea/tasks.xml

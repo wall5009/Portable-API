@@ -1,0 +1,30 @@
+modLoader = "javafml"
+loaderVersion = "[1,)"
+license = "Apache-2.0"
+
+[[mods]]
+modId = "portable_api_validation"
+version = "${version}"
+displayName = "Portable API Validation"
+description = '''Blank validation consumer for Portable API.'''
+
+[[dependencies.portable_api_validation]]
+modId = "neoforge"
+type = "required"
+versionRange = "[${neoforge_version},)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.portable_api_validation]]
+modId = "minecraft"
+type = "required"
+versionRange = "[${minecraft_version}]"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.portable_api_validation]]
+modId = "portable_api"
+type = "required"
+versionRange = "[${version},)"
+ordering = "AFTER"
+side = "BOTH"
