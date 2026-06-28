@@ -31,21 +31,40 @@ legacyForge {
 }
 
 dependencies {
-    compileOnly project(':api-core')
-    compileOnly project(':api-mc-1201')
+    implementation project(':api-core')
+    implementation project(':api-mc-1201')
     testImplementation project(':api-core')
 }
 
 tasks.named('processResources') {
-    inputs.properties(
+    def resourceProperties = [
             mod_id: rootProject.ext.apiModId,
             mod_name: 'Portable API',
             mod_version: project.version,
             minecraft_version: providers.gradleProperty('minecraft_1201').get(),
             forge_version: providers.gradleProperty('forge_1201').get()
-    )
+    ]
+    filteringCharset = 'UTF-8'
+    inputs.properties(resourceProperties)
+
     filesMatching('META-INF/mods.toml') {
-        expand inputs.properties
+        expand(resourceProperties)
+    }
+
+    def processedMetadata = project.layout.buildDirectory.file('resources/main/META-INF/mods.toml')
+    outputs.upToDateWhen {
+        def metadataFile = processedMetadata.get().asFile
+        !metadataFile.isFile() || !metadataFile.getText('UTF-8').contains('${')
+    }
+
+    doLast {
+        def metadataFile = processedMetadata.get().asFile
+        if (!metadataFile.isFile()) {
+            throw new GradleException("Expected processed metadata was not created: ${metadataFile}")
+        }
+        if (metadataFile.getText('UTF-8').contains('${')) {
+            throw new GradleException("Unresolved resource placeholder remains in ${metadataFile}")
+        }
     }
 }
 
