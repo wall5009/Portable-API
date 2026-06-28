@@ -28,8 +28,6 @@ import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 public final class TemplateForge1201Mod {
     /**
      * Forge injects the mod event bus for modern Java mod constructors.
-     *
-     * @param modEventBus mod event bus
      */
 
     @SuppressWarnings("removal")

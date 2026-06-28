@@ -1,0 +1,510 @@
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+
+/*
+ * Complete release/distribution assembly for Portable API.
+ *
+ * The public mod-hosting files are the four platform-* runtime JARs. The
+ * template JARs are still built and verified, but are placed under developer
+ * artifacts rather than the CurseForge/Modrinth upload directories.
+ */
+
+def apiTargets = [
+        [
+                id          : 'fabric-1201',
+                module      : 'platform-fabric-1201',
+                loader      : 'Fabric',
+                loaderId    : 'fabric',
+                minecraft   : '1.20.1',
+                javaVersion : 17,
+                metadataPath: 'fabric.mod.json',
+                fabricApi   : true
+        ],
+        [
+                id          : 'forge-1201',
+                module      : 'platform-forge-1201',
+                loader      : 'Forge',
+                loaderId    : 'forge',
+                minecraft   : '1.20.1',
+                javaVersion : 17,
+                metadataPath: 'META-INF/mods.toml',
+                fabricApi   : false
+        ],
+        [
+                id          : 'fabric-1211',
+                module      : 'platform-fabric-1211',
+                loader      : 'Fabric',
+                loaderId    : 'fabric',
+                minecraft   : '1.21.1',
+                javaVersion : 21,
+                metadataPath: 'fabric.mod.json',
+                fabricApi   : true
+        ],
+        [
+                id          : 'neoforge-1211',
+                module      : 'platform-neoforge-1211',
+                loader      : 'NeoForge',
+                loaderId    : 'neoforge',
+                minecraft   : '1.21.1',
+                javaVersion : 21,
+                metadataPath: 'META-INF/neoforge.mods.toml',
+                fabricApi   : false
+        ]
+]
+
+def templateTargets = [
+        [id: 'fabric-1201', module: 'template-fabric-1201', metadataPath: 'fabric.mod.json'],
+        [id: 'forge-1201', module: 'template-forge-1201', metadataPath: 'META-INF/mods.toml'],
+        [id: 'fabric-1211', module: 'template-fabric-1211', metadataPath: 'fabric.mod.json'],
+        [id: 'neoforge-1211', module: 'template-neoforge-1211', metadataPath: 'META-INF/neoforge.mods.toml']
+]
+
+def apiMavenModules = [
+        'api-core',
+        'api-mc-1201',
+        'api-mc-1211',
+        'platform-fabric-1201',
+        'platform-forge-1201',
+        'platform-fabric-1211',
+        'platform-neoforge-1211'
+]
+
+def releaseModules = (apiTargets.collect { it.module } + templateTargets.collect { it.module }).asImmutable()
+def releaseVersion = rootProject.version.toString()
+def releaseChannel = providers.gradleProperty('releaseChannel').orElse('release')
+def centralRequested = providers.gradleProperty('mavenCentral').map { it.toBoolean() }.orElse(false)
+def signingKey = providers.gradleProperty('signingKey').orElse(providers.environmentVariable('SIGNING_KEY'))
+
+def releaseDirectory = layout.buildDirectory.dir("release/portable-api-${releaseVersion}")
+def componentDirectory = layout.buildDirectory.dir('release-components')
+def distributionDirectory = layout.buildDirectory.dir('distributions')
+def stagedMavenDirectory = layout.buildDirectory.dir('staging-maven')
+
+def artifactBaseName = { String module -> "${rootProject.name}-${module}-${releaseVersion}" }
+def runtimeJar = { String module ->
+    project(":${module}").layout.buildDirectory.file("libs/${artifactBaseName(module)}.jar")
+}
+def sourcesJar = { String module ->
+    project(":${module}").layout.buildDirectory.file("libs/${artifactBaseName(module)}-sources.jar")
+}
+def javadocJar = { String module ->
+    project(":${module}").layout.buildDirectory.file("libs/${artifactBaseName(module)}-javadoc.jar")
+}
+
+def digestFile = { File file, String algorithm ->
+    MessageDigest digest = MessageDigest.getInstance(algorithm)
+    file.withInputStream { input ->
+        byte[] buffer = new byte[8192]
+        int read
+        while ((read = input.read(buffer)) != -1) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    digest.digest().encodeHex().toString()
+}
+
+def copyFile = { File source, File destinationDirectory ->
+    if (!destinationDirectory.mkdirs() && !destinationDirectory.isDirectory()) {
+        throw new GradleException("Unable to create distribution directory: ${destinationDirectory}")
+    }
+    copy {
+        from source
+        into destinationDirectory
+    }
+}
+
+def writeUtf8 = { File file, String text ->
+    if (!file.parentFile.mkdirs() && !file.parentFile.isDirectory()) {
+        throw new GradleException("Unable to create parent directory for ${file}")
+    }
+    file.setText(text, 'UTF-8')
+}
+
+tasks.register('validateDistributionConfiguration') {
+    group = 'release'
+    description = 'Validates release-channel and optional Maven Central signing settings.'
+
+    doLast {
+        def validChannels = ['alpha', 'beta', 'release']
+        if (!validChannels.contains(releaseChannel.get())) {
+            throw new GradleException(
+                    "releaseChannel must be alpha, beta, or release; received '${releaseChannel.get()}'."
+            )
+        }
+
+        if (centralRequested.get()) {
+            if (!signingKey.isPresent() || signingKey.get().trim().isEmpty()) {
+                throw new GradleException(
+                        'Maven Central output was requested, but no signing key was provided. '
+                                + 'Set SIGNING_KEY or -PsigningKey.'
+                )
+            }
+        }
+    }
+}
+
+tasks.register('buildAllDistributionJars') {
+    group = 'release'
+    description = 'Builds every API and template runtime, sources, and Javadoc JAR.'
+    dependsOn releaseModules.collect { module -> ":${module}:build" }
+}
+
+tasks.register('stageApiMavenRepository') {
+    group = 'publishing'
+    description = 'Stages all API Maven publications in Maven repository layout.'
+    dependsOn apiMavenModules.collect { module ->
+        ":${module}:publishAllPublicationsToStagingRepository"
+    }
+}
+
+tasks.register('publishApiToRemoteRepository') {
+    group = 'publishing'
+    description = 'Publishes only API modules to MAVEN_PUBLISH_URL using configured credentials.'
+
+    doFirst {
+        ['MAVEN_PUBLISH_URL', 'MAVEN_USERNAME', 'MAVEN_PASSWORD'].each { variable ->
+            if (!providers.environmentVariable(variable).isPresent()) {
+                throw new GradleException("${variable} must be set before publishing to the remote Maven repository.")
+            }
+        }
+    }
+
+    dependsOn apiMavenModules.collect { module ->
+        ":${module}:publishAllPublicationsToRemoteRepository"
+    }
+}
+
+tasks.register('verifyDistributionArtifacts') {
+    group = 'verification'
+    description = 'Verifies every final runtime JAR and staged Maven publication.'
+    dependsOn 'validateDistributionConfiguration', 'buildAllDistributionJars', 'stageApiMavenRepository'
+
+    doLast {
+        apiTargets.each { target ->
+            File jarFile = runtimeJar(target.module).get().asFile
+            if (!jarFile.isFile() || jarFile.length() == 0L) {
+                throw new GradleException("Missing runtime JAR for ${target.module}: ${jarFile}")
+            }
+
+            new ZipFile(jarFile).withCloseable { ZipFile archive ->
+                def requiredEntries = [
+                        target.metadataPath,
+                        'dev/portablemc/api/PortableMod.class'
+                ]
+                def missingEntries = requiredEntries.findAll { archive.getEntry(it) == null }
+                if (!missingEntries.empty) {
+                    throw new GradleException(
+                            "${jarFile.name} is missing required entries: ${missingEntries.join(', ')}"
+                    )
+                }
+
+                def metadataEntry = archive.getEntry(target.metadataPath)
+                def metadataText = archive.getInputStream(metadataEntry).getText('UTF-8')
+                if (metadataText.contains('${')) {
+                    throw new GradleException(
+                            "${jarFile.name} contains unresolved placeholders in ${target.metadataPath}."
+                    )
+                }
+            }
+
+            [sourcesJar(target.module), javadocJar(target.module)].each { provider ->
+                File companion = provider.get().asFile
+                if (!companion.isFile() || companion.length() == 0L) {
+                    throw new GradleException("Missing Maven companion artifact: ${companion}")
+                }
+            }
+        }
+
+        templateTargets.each { target ->
+            File jarFile = runtimeJar(target.module).get().asFile
+            if (!jarFile.isFile() || jarFile.length() == 0L) {
+                throw new GradleException("Missing template runtime JAR for ${target.module}: ${jarFile}")
+            }
+
+            new ZipFile(jarFile).withCloseable { ZipFile archive ->
+                def requiredEntries = [
+                        target.metadataPath,
+                        'dev/portablemc/template/PortableTemplateMod.class',
+                        'assets/portable_template/blockstates/portable_block.json',
+                        'assets/portable_template/models/block/portable_block.json',
+                        'assets/portable_template/models/item/portable_block.json',
+                        'assets/portable_template/models/item/portable_item.json'
+                ]
+                def missingEntries = requiredEntries.findAll { archive.getEntry(it) == null }
+                if (!missingEntries.empty) {
+                    throw new GradleException(
+                            "${jarFile.name} is missing template classes/resources: ${missingEntries.join(', ')}"
+                    )
+                }
+            }
+        }
+
+        File mavenRoot = stagedMavenDirectory.get().asFile
+        if (!mavenRoot.isDirectory()) {
+            throw new GradleException("Staged Maven repository was not created: ${mavenRoot}")
+        }
+
+        apiMavenModules.each { module ->
+            def artifactId = "${rootProject.name}-${module}"
+            File versionDirectory = new File(
+                    mavenRoot,
+                    "${rootProject.group.toString().replace('.', '/')}/${artifactId}/${releaseVersion}"
+            )
+            File pomFile = new File(versionDirectory, "${artifactId}-${releaseVersion}.pom")
+            File publishedJar = new File(versionDirectory, "${artifactId}-${releaseVersion}.jar")
+            if (!pomFile.isFile() || !publishedJar.isFile()) {
+                throw new GradleException(
+                        "Incomplete Maven publication for ${module}; expected ${pomFile.name} and ${publishedJar.name}."
+                )
+            }
+
+            if (centralRequested.get()) {
+                def signedFiles = versionDirectory.listFiles({ File file ->
+                    file.isFile() && (file.name.endsWith('.jar') || file.name.endsWith('.pom'))
+                } as FileFilter)
+                signedFiles.each { publishedFile ->
+                    File signature = new File(publishedFile.parentFile, "${publishedFile.name}.asc")
+                    if (!signature.isFile()) {
+                        throw new GradleException(
+                                "Maven Central was requested, but ${publishedFile.name}.asc is missing."
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+def mavenRepositoryBundle = tasks.register('mavenRepositoryBundle', Zip) {
+    group = 'distribution'
+    description = 'Creates a ZIP containing the staged API Maven repository.'
+    dependsOn 'verifyDistributionArtifacts'
+    from stagedMavenDirectory
+    destinationDirectory = componentDirectory
+    archiveFileName = "portable-api-maven-repository-${releaseVersion}.zip"
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+def mavenRepositoryBundleFile = mavenRepositoryBundle.flatMap { it.archiveFile }
+
+tasks.register('assembleDistributionLayout') {
+    group = 'distribution'
+    description = 'Creates service-specific GitHub, CurseForge, Modrinth, Maven, and developer release folders.'
+    dependsOn 'check', 'validateGeneratedResources', 'verifyDistributionArtifacts', mavenRepositoryBundle
+    outputs.dir releaseDirectory
+    notCompatibleWithConfigurationCache(
+            'The release layout performs dynamic cross-project artifact inspection, checksumming, and filesystem assembly.'
+    )
+
+    doLast {
+        File root = releaseDirectory.get().asFile
+        delete root
+        if (!root.mkdirs() && !root.isDirectory()) {
+            throw new GradleException("Unable to create release directory: ${root}")
+        }
+
+        File githubDirectory = new File(root, 'github')
+        File curseForgeDirectory = new File(root, 'curseforge')
+        File modrinthDirectory = new File(root, 'modrinth')
+        File mavenDirectory = new File(root, 'maven')
+        File developerDirectory = new File(root, 'developer-artifacts')
+
+        apiTargets.each { target ->
+            File runtime = runtimeJar(target.module).get().asFile
+            File source = sourcesJar(target.module).get().asFile
+            File javadoc = javadocJar(target.module).get().asFile
+
+            copyFile(runtime, githubDirectory)
+
+            File curseTargetDirectory = new File(curseForgeDirectory, target.id)
+            copyFile(runtime, curseTargetDirectory)
+            def curseMetadata = [
+                    displayName     : "Portable API ${releaseVersion} - ${target.loader} ${target.minecraft}",
+                    releaseType     : releaseChannel.get(),
+                    gameVersionNames: [target.minecraft, target.loader, "Java ${target.javaVersion}"],
+                    relations       : target.fabricApi
+                            ? [projects: [[slug: 'fabric-api', type: 'requiredDependency']]]
+                            : [projects: []]
+            ]
+            writeUtf8(
+                    new File(curseTargetDirectory, 'upload-metadata.json'),
+                    JsonOutput.prettyPrint(JsonOutput.toJson(curseMetadata)) + System.lineSeparator()
+            )
+
+            File modrinthTargetDirectory = new File(modrinthDirectory, target.id)
+            copyFile(runtime, modrinthTargetDirectory)
+            File additionalFilesDirectory = new File(modrinthTargetDirectory, 'optional-additional-files')
+            copyFile(source, additionalFilesDirectory)
+            copyFile(javadoc, additionalFilesDirectory)
+            def modrinthMetadata = [
+                    name          : "Portable API ${releaseVersion} - ${target.loader} ${target.minecraft}",
+                    version_number: "${releaseVersion}-${target.id}",
+                    version_type  : releaseChannel.get(),
+                    loaders       : [target.loaderId],
+                    game_versions : [target.minecraft],
+                    dependencies  : target.fabricApi
+                            ? [[project_id: 'fabric-api', dependency_type: 'required']]
+                            : []
+            ]
+            writeUtf8(
+                    new File(modrinthTargetDirectory, 'upload-metadata.json'),
+                    JsonOutput.prettyPrint(JsonOutput.toJson(modrinthMetadata)) + System.lineSeparator()
+            )
+        }
+
+        File templateDirectory = new File(developerDirectory, 'template-runtime-jars')
+        templateTargets.each { target ->
+            copyFile(runtimeJar(target.module).get().asFile, templateDirectory)
+        }
+
+        File apiCompanionDirectory = new File(developerDirectory, 'api-sources-and-javadocs')
+        apiTargets.each { target ->
+            copyFile(sourcesJar(target.module).get().asFile, apiCompanionDirectory)
+            copyFile(javadocJar(target.module).get().asFile, apiCompanionDirectory)
+        }
+
+        copy {
+            from stagedMavenDirectory
+            into new File(mavenDirectory, 'repository')
+        }
+        copyFile(mavenRepositoryBundleFile.get().asFile, mavenDirectory)
+
+        ['README.md', 'LICENSE', 'CONTRIBUTING.md'].each { projectFileName ->
+            File projectFile = rootProject.file(projectFileName)
+            if (projectFile.isFile()) {
+                copyFile(projectFile, new File(githubDirectory, 'project-documents'))
+            }
+        }
+
+        def compatibilityRows = apiTargets.collect { target ->
+            "| ${target.minecraft} | ${target.loader} | `${runtimeJar(target.module).get().asFile.name}` | Java ${target.javaVersion} |"
+        }.join(System.lineSeparator())
+
+        def releaseNotes = """# Portable API ${releaseVersion}
+
+## Changes
+
+- Replace this section with the changes made in this release.
+
+## Compatibility
+
+| Minecraft | Loader | File | Java |
+|---|---|---|---|
+${compatibilityRows}
+
+## Installation
+
+Install exactly one Portable API JAR matching the modpack's Minecraft version and loader. Fabric installations also require Fabric API.
+"""
+        writeUtf8(new File(root, 'RELEASE-NOTES.md'), releaseNotes)
+        copyFile(new File(root, 'RELEASE-NOTES.md'), githubDirectory)
+
+        def coordinates = apiMavenModules.collect { module ->
+            "- `${rootProject.group}:${rootProject.name}-${module}:${releaseVersion}`"
+        }.join(System.lineSeparator())
+        writeUtf8(
+                new File(mavenDirectory, 'MAVEN-COORDINATES.md'),
+                """# Portable API Maven coordinates
+
+${coordinates}
+
+For ordinary mod development, use the platform artifact matching the target loader and Minecraft version. The core and api-mc artifacts are published for advanced integrations and for resolving the platform publications.
+"""
+        )
+
+        def manualGuide = """# Manual distribution checklist for Portable API ${releaseVersion}
+
+1. Edit `RELEASE-NOTES.md` before uploading anything.
+2. GitHub: create tag `v${releaseVersion}` and upload every JAR directly inside `github/`, plus `RELEASE-NOTES.md`, `SHA256SUMS.txt`, and `SHA512SUMS.txt`.
+3. CurseForge: create one Portable API project. Upload each JAR from `curseforge/<target>/` as a separate file/version, using the adjacent `upload-metadata.json` values. Fabric files require Fabric API; Forge and NeoForge files have no external mod dependency.
+4. Modrinth: use one Portable API project. Create four separate versions, one per `modrinth/<target>/` directory, using the adjacent metadata. The runtime JAR is the primary file. Sources and Javadoc may be uploaded as optional additional files.
+5. Maven: deploy the contents of `maven/repository/` to a Maven repository, or upload `maven/portable-api-maven-repository-${releaseVersion}.zip` to a service that accepts repository-layout bundles. Maven Central requires PGP signatures; rebuild with `-PmavenCentral=true` and SIGNING_KEY/SIGNING_PASSWORD before uploading there.
+6. Never upload files from `developer-artifacts/template-runtime-jars/` as Portable API player downloads. They are examples/testing artifacts.
+"""
+        writeUtf8(new File(root, 'MANUAL-DISTRIBUTION.md'), manualGuide)
+
+        def manifestTargets = apiTargets.collect { target ->
+            File runtime = runtimeJar(target.module).get().asFile
+            [
+                    target       : target.id,
+                    module       : target.module,
+                    minecraft    : target.minecraft,
+                    loader       : target.loaderId,
+                    java         : target.javaVersion,
+                    runtimeJar   : runtime.name,
+                    sha256       : digestFile(runtime, 'SHA-256'),
+                    requiredMods : target.fabricApi ? ['fabric-api'] : []
+            ]
+        }
+        def manifest = [
+                project            : rootProject.name,
+                version            : releaseVersion,
+                releaseChannel     : releaseChannel.get(),
+                mavenGroup         : rootProject.group.toString(),
+                mavenCentralSigned : signingKey.isPresent() && !signingKey.get().trim().isEmpty(),
+                targets            : manifestTargets
+        ]
+        writeUtf8(
+                new File(root, 'distribution-manifest.json'),
+                JsonOutput.prettyPrint(JsonOutput.toJson(manifest)) + System.lineSeparator()
+        )
+
+        def checksumCandidates = []
+        root.eachFileRecurse { file ->
+            if (file.isFile()
+                    && file.name != 'SHA256SUMS.txt'
+                    && file.name != 'SHA512SUMS.txt') {
+                checksumCandidates << file
+            }
+        }
+        checksumCandidates.sort { left, right ->
+            root.toPath().relativize(left.toPath()).toString() <=>
+                    root.toPath().relativize(right.toPath()).toString()
+        }
+
+        def sha256Lines = checksumCandidates.collect { file ->
+            "${digestFile(file, 'SHA-256')}  ${root.toPath().relativize(file.toPath()).toString().replace('\\', '/')}"
+        }
+        def sha512Lines = checksumCandidates.collect { file ->
+            "${digestFile(file, 'SHA-512')}  ${root.toPath().relativize(file.toPath()).toString().replace('\\', '/')}"
+        }
+        writeUtf8(new File(root, 'SHA256SUMS.txt'), sha256Lines.join(System.lineSeparator()) + System.lineSeparator())
+        writeUtf8(new File(root, 'SHA512SUMS.txt'), sha512Lines.join(System.lineSeparator()) + System.lineSeparator())
+        copyFile(new File(root, 'SHA256SUMS.txt'), githubDirectory)
+        copyFile(new File(root, 'SHA512SUMS.txt'), githubDirectory)
+    }
+}
+
+def fullDistributionArchive = tasks.register('fullDistributionArchive', Zip) {
+    group = 'distribution'
+    description = 'Creates one archive containing every manually distributable release artifact.'
+    dependsOn 'assembleDistributionLayout'
+    from releaseDirectory
+    destinationDirectory = distributionDirectory
+    archiveFileName = "portable-api-full-distribution-${releaseVersion}.zip"
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+def fullDistributionArchiveFile = fullDistributionArchive.flatMap { it.archiveFile }
+
+tasks.register('fullDistributionBuild') {
+    group = 'release'
+    description = 'Builds, validates, stages, checksums, and packages everything needed for full distribution.'
+    dependsOn fullDistributionArchive
+    notCompatibleWithConfigurationCache(
+            'The complete distribution build includes the dynamic assembleDistributionLayout task.'
+    )
+
+    doLast {
+        logger.lifecycle('Portable API full distribution is ready:')
+        logger.lifecycle(" - Folder: ${releaseDirectory.get().asFile}")
+        logger.lifecycle(" - Archive: ${fullDistributionArchiveFile.get().asFile}")
+    }
+}
+
+tasks.register('releaseBuild') {
+    group = 'release'
+    description = 'Alias for fullDistributionBuild.'
+    dependsOn 'fullDistributionBuild'
+}

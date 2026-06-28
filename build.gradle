@@ -21,6 +21,9 @@ subprojects {
     apply plugin: 'java-library'
     apply plugin: 'maven-publish'
     apply plugin: 'checkstyle'
+    if (!project.name.startsWith('template')) {
+        apply plugin: 'signing'
+    }
 
     base {
         archivesName = "${rootProject.name}-${project.name}"
@@ -73,19 +76,48 @@ subprojects {
         testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     }
 
+    def moduleName = project.name
+    def modulePath = project.path
+    def moduleDirectory = project.layout.projectDirectory.asFile
+    def licenseSourceFiles = fileTree('src') {
+        include '**/*.java'
+        exclude '**/generated/**'
+    }
+    def boundarySourceFiles = fileTree('src/main/java') {
+        include '**/*.java'
+    }
+    def bannedDependencyPrefixes = []
+    if (moduleName in ['api-core', 'template-common']) {
+        bannedDependencyPrefixes.addAll(['net.fabricmc.', 'net.minecraftforge.', 'net.neoforged.', 'net.minecraft.'])
+    }
+    if (moduleName.startsWith('api-mc-')) {
+        bannedDependencyPrefixes.addAll(['net.fabricmc.', 'net.minecraftforge.', 'net.neoforged.'])
+    }
+    if (moduleName.contains('fabric')) {
+        bannedDependencyPrefixes.addAll(['net.minecraftforge.', 'net.neoforged.'])
+    }
+    if (moduleName.contains('neoforge')) {
+        bannedDependencyPrefixes.addAll(['net.fabricmc.', 'net.minecraftforge.'])
+    } else if (moduleName.contains('forge-')) {
+        bannedDependencyPrefixes.addAll(['net.fabricmc.', 'net.neoforged.'])
+    }
+    bannedDependencyPrefixes = bannedDependencyPrefixes.asImmutable()
+
     tasks.register('validateLicenseHeaders') {
         group = 'verification'
         description = 'Fails when Java source files do not carry the project license header.'
-        inputs.files(fileTree('src') {
-            include '**/*.java'
-            exclude '**/generated/**'
-        })
+        inputs.files(licenseSourceFiles)
         doLast {
             def missing = inputs.files.files.findAll { file ->
-                file.isFile() && !file.text.startsWith('/*\n * MIT License\n')
+                file.isFile() && !file.getText('UTF-8').startsWith('/*\n * MIT License\n')
             }
             if (!missing.empty) {
-                throw new GradleException("Missing license header in ${project.path}: ${missing.collect { project.relativePath(it) }.join(', ')}")
+                def relativeFiles = missing.collect { file ->
+                    moduleDirectory.toPath().relativize(file.toPath()).toString().replace('\\', '/')
+                }
+                throw new GradleException(
+                        "Missing license header in ${modulePath}: ${relativeFiles.join(', ')}"
+                )
             }
         }
     }
@@ -93,34 +125,26 @@ subprojects {
     tasks.register('dependencyBoundaryCheck') {
         group = 'verification'
         description = 'Checks that common modules do not import loader-only packages.'
-        inputs.files(fileTree('src/main/java') { include '**/*.java' })
+        inputs.files(boundarySourceFiles)
+        inputs.property('bannedDependencyPrefixes', bannedDependencyPrefixes)
         doLast {
-            def banned = []
-            if (project.name in ['api-core', 'template-common']) {
-                banned.addAll(['net.fabricmc.', 'net.minecraftforge.', 'net.neoforged.', 'net.minecraft.'])
-            }
-            if (project.name.startsWith('api-mc-')) {
-                banned.addAll(['net.fabricmc.', 'net.minecraftforge.', 'net.neoforged.'])
-            }
-            if (project.name.contains('fabric')) {
-                banned.addAll(['net.minecraftforge.', 'net.neoforged.'])
-            }
-            if (project.name.contains('neoforge')) {
-                banned.addAll(['net.fabricmc.', 'net.minecraftforge.'])
-            } else if (project.name.contains('forge-')) {
-                banned.addAll(['net.fabricmc.', 'net.neoforged.'])
-            }
             def violations = []
             inputs.files.files.each { file ->
-                def text = file.text
-                banned.each { token ->
-                    if (text.contains(token)) {
-                        violations << "${project.relativePath(file)} contains ${token}"
+                def sourceText = file.getText('UTF-8')
+                bannedDependencyPrefixes.each { token ->
+                    if (sourceText.contains(token)) {
+                        def relativeFile = moduleDirectory.toPath()
+                                .relativize(file.toPath())
+                                .toString()
+                                .replace('\\', '/')
+                        violations << "${relativeFile} contains ${token}"
                     }
                 }
             }
             if (!violations.empty) {
-                throw new GradleException("Dependency boundary violations in ${project.path}:\n - ${violations.join('\n - ')}")
+                throw new GradleException(
+                        "Dependency boundary violations in ${modulePath}:\n - ${violations.join('\n - ')}"
+                )
             }
         }
     }
@@ -175,6 +199,23 @@ subprojects {
             }
         }
     }
+
+
+    if (!project.name.startsWith('template')) {
+        def inMemorySigningKey = providers.gradleProperty('signingKey')
+                .orElse(providers.environmentVariable('SIGNING_KEY'))
+        def inMemorySigningPassword = providers.gradleProperty('signingPassword')
+                .orElse(providers.environmentVariable('SIGNING_PASSWORD'))
+        if (inMemorySigningKey.isPresent() && !inMemorySigningKey.get().trim().isEmpty()) {
+            signing {
+                useInMemoryPgpKeys(
+                        inMemorySigningKey.get(),
+                        inMemorySigningPassword.orElse('').get()
+                )
+                sign publishing.publications.mavenJava
+            }
+        }
+    }
 }
 
 tasks.register('dependencyBoundaryCheck') {
@@ -208,24 +249,26 @@ tasks.register('validateGeneratedResources') {
 
 tasks.register('verifyArtifacts') {
     group = 'verification'
-    description = 'Checks that release jars are produced and do not contain obviously incompatible loader namespaces.'
-    dependsOn subprojects.collect { it.tasks.named('assemble') }
+    description = 'Checks that every exact final runtime JAR is produced.'
+    def required = [
+            'platform-fabric-1201',
+            'platform-forge-1201',
+            'platform-fabric-1211',
+            'platform-neoforge-1211',
+            'template-fabric-1201',
+            'template-forge-1201',
+            'template-fabric-1211',
+            'template-neoforge-1211'
+    ]
+    dependsOn required.collect { module -> ":${module}:build" }
     doLast {
-        def required = [
-                'platform-fabric-1201',
-                'platform-forge-1201',
-                'platform-fabric-1211',
-                'platform-neoforge-1211',
-                'template-fabric-1201',
-                'template-forge-1201',
-                'template-fabric-1211',
-                'template-neoforge-1211'
-        ]
         required.each { module ->
-            def libs = project(":${module}").layout.buildDirectory.dir('libs').get().asFile
-            def jars = libs.listFiles({ File file -> file.name.endsWith('.jar') && !file.name.endsWith('-sources.jar') && !file.name.endsWith('-javadoc.jar') } as FileFilter)
-            if (jars == null || jars.length == 0) {
-                throw new GradleException("No runtime jar found for ${module} in ${libs}")
+            def expected = project(":${module}").layout.buildDirectory
+                    .file("libs/${rootProject.name}-${module}-${project.version}.jar")
+                    .get()
+                    .asFile
+            if (!expected.isFile() || expected.length() == 0L) {
+                throw new GradleException("Final runtime JAR was not produced for ${module}: ${expected}")
             }
         }
     }
@@ -258,8 +301,4 @@ tasks.register('generatePublicationChecksums') {
     }
 }
 
-tasks.register('releaseBuild') {
-    group = 'release'
-    description = 'Runs the full local release gate: tests, validation, artifact checks, staging publication, and checksums.'
-    dependsOn 'check', 'validateGeneratedResources', 'verifyArtifacts', 'generatePublicationChecksums'
-}
+apply from: 'gradle/distribution.gradle'

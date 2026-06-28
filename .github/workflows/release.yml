@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_channel:
-        description: Release channel for template distribution
+        description: Release channel
         required: true
         default: beta
         type: choice
@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   build:
-    name: Release build
+    name: Full distribution build
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -37,9 +37,9 @@ jobs:
       - id: version
         shell: bash
         run: echo "version=$(grep '^version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
-      - name: Run release gate
-        run: ./gradlew releaseBuild --stacktrace
-      - name: Publish Maven artifacts
+      - name: Build complete distribution
+        run: ./gradlew clean fullDistributionBuild -PreleaseChannel=${{ inputs.release_channel }} --stacktrace
+      - name: Publish API Maven modules
         if: ${{ !inputs.dry_run }}
         env:
           MAVEN_PUBLISH_URL: ${{ secrets.MAVEN_PUBLISH_URL }}
@@ -49,13 +49,14 @@ jobs:
           test -n "$MAVEN_PUBLISH_URL"
           test -n "$MAVEN_USERNAME"
           test -n "$MAVEN_PASSWORD"
-          ./gradlew publishAllPublicationsToRemoteRepository --stacktrace
+          ./gradlew publishApiToRemoteRepository --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: portable-api-release-${{ steps.version.outputs.version }}
+          if-no-files-found: error
           path: |
-            **/build/libs/*.jar
-            build/staging-maven/**
+            build/release/**
+            build/distributions/**
 
   github-release:
     name: GitHub Release
@@ -72,108 +73,81 @@ jobs:
           tag_name: v${{ needs.build.outputs.version }}
           name: Portable API v${{ needs.build.outputs.version }}
           generate_release_notes: true
-          files: dist/**/*.jar
+          prerelease: ${{ inputs.release_channel != 'release' }}
+          files: |
+            dist/release/portable-api-${{ needs.build.outputs.version }}/github/*.jar
+            dist/release/portable-api-${{ needs.build.outputs.version }}/github/*.md
+            dist/release/portable-api-${{ needs.build.outputs.version }}/github/SHA*SUMS.txt
+            dist/distributions/*.zip
 
   modrinth:
-    name: Modrinth template publish ${{ matrix.suffix }}
+    name: Modrinth API publish ${{ matrix.target }}
     runs-on: ubuntu-latest
     needs: build
     if: ${{ !inputs.dry_run }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suffix: fabric-1.20.1
-            artifact: portable-api-template-fabric-1201-*.jar
-            loaders: '["fabric"]'
-            game_versions: '["1.20.1"]'
-            title: Portable Template Fabric 1.20.1
-          - suffix: forge-1.20.1
-            artifact: portable-api-template-forge-1201-*.jar
-            loaders: '["forge"]'
-            game_versions: '["1.20.1"]'
-            title: Portable Template Forge 1.20.1
-          - suffix: fabric-1.21.1
-            artifact: portable-api-template-fabric-1211-*.jar
-            loaders: '["fabric"]'
-            game_versions: '["1.21.1"]'
-            title: Portable Template Fabric 1.21.1
-          - suffix: neoforge-1.21.1
-            artifact: portable-api-template-neoforge-1211-*.jar
-            loaders: '["neoforge"]'
-            game_versions: '["1.21.1"]'
-            title: Portable Template NeoForge 1.21.1
+        target:
+          - fabric-1201
+          - forge-1201
+          - fabric-1211
+          - neoforge-1211
     env:
       MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
       MODRINTH_PROJECT_ID: ${{ secrets.MODRINTH_PROJECT_ID }}
-      MODRINTH_API_PROJECT_ID: ${{ secrets.MODRINTH_API_PROJECT_ID }}
       VERSION: ${{ needs.build.outputs.version }}
-      CHANNEL: ${{ inputs.release_channel }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: portable-api-release-${{ needs.build.outputs.version }}
           path: dist
-      - name: Publish template artifact
-        env:
-          LOADERS: ${{ matrix.loaders }}
-          GAME_VERSIONS: ${{ matrix.game_versions }}
+      - name: Publish API artifact
         run: |
           test -n "$MODRINTH_TOKEN"
           test -n "$MODRINTH_PROJECT_ID"
-          test -n "$MODRINTH_API_PROJECT_ID"
-          FILE=$(find dist -name '${{ matrix.artifact }}' ! -name '*sources*' ! -name '*javadoc*' | head -n1)
+          TARGET_DIR="dist/release/portable-api-$VERSION/modrinth/${{ matrix.target }}"
+          FILE=$(find "$TARGET_DIR" -maxdepth 1 -name '*.jar' | head -n1)
           test -n "$FILE"
+          DATA=$(jq --arg project "$MODRINTH_PROJECT_ID" '. + {project_id:$project, featured:false, file_parts:["file"]}' "$TARGET_DIR/upload-metadata.json")
           curl --fail-with-body -X POST https://api.modrinth.com/v2/version \
             -H "Authorization: $MODRINTH_TOKEN" \
-            -F "data={\"project_id\":\"$MODRINTH_PROJECT_ID\",\"name\":\"${{ matrix.title }} $VERSION\",\"version_number\":\"$VERSION-${{ matrix.suffix }}\",\"version_type\":\"$CHANNEL\",\"loaders\":$LOADERS,\"game_versions\":$GAME_VERSIONS,\"featured\":false,\"dependencies\":[{\"project_id\":\"$MODRINTH_API_PROJECT_ID\",\"dependency_type\":\"required\"}],\"file_parts\":[\"file\"]}" \
+            -F "data=$DATA" \
             -F "file=@$FILE"
 
   curseforge:
-    name: CurseForge template publish ${{ matrix.suffix }}
+    name: CurseForge API publish ${{ matrix.target }}
     runs-on: ubuntu-latest
     needs: build
     if: ${{ !inputs.dry_run }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - suffix: fabric-1.20.1
-            artifact: portable-api-template-fabric-1201-*.jar
-            game_versions: '["1.20.1","Fabric"]'
-            title: Portable Template Fabric 1.20.1
-          - suffix: forge-1.20.1
-            artifact: portable-api-template-forge-1201-*.jar
-            game_versions: '["1.20.1","Forge"]'
-            title: Portable Template Forge 1.20.1
-          - suffix: fabric-1.21.1
-            artifact: portable-api-template-fabric-1211-*.jar
-            game_versions: '["1.21.1","Fabric"]'
-            title: Portable Template Fabric 1.21.1
-          - suffix: neoforge-1.21.1
-            artifact: portable-api-template-neoforge-1211-*.jar
-            game_versions: '["1.21.1","NeoForge"]'
-            title: Portable Template NeoForge 1.21.1
+        target:
+          - fabric-1201
+          - forge-1201
+          - fabric-1211
+          - neoforge-1211
     env:
       CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
       CURSEFORGE_PROJECT_ID: ${{ secrets.CURSEFORGE_PROJECT_ID }}
       VERSION: ${{ needs.build.outputs.version }}
-      CHANNEL: ${{ inputs.release_channel }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: portable-api-release-${{ needs.build.outputs.version }}
           path: dist
-      - name: Upload template artifact
-        env:
-          GAME_VERSIONS: ${{ matrix.game_versions }}
+      - name: Upload API artifact
         run: |
           test -n "$CURSEFORGE_TOKEN"
           test -n "$CURSEFORGE_PROJECT_ID"
-          FILE=$(find dist -name '${{ matrix.artifact }}' ! -name '*sources*' ! -name '*javadoc*' | head -n1)
+          TARGET_DIR="dist/release/portable-api-$VERSION/curseforge/${{ matrix.target }}"
+          FILE=$(find "$TARGET_DIR" -maxdepth 1 -name '*.jar' | head -n1)
           test -n "$FILE"
           META=$(mktemp)
-          printf '{"changelog":"See GitHub release notes.","changelogType":"markdown","displayName":"${{ matrix.title }} %s","releaseType":"%s","gameVersions":%s}' "$VERSION" "$CHANNEL" "$GAME_VERSIONS" > "$META"
+          jq --arg changelog "See the GitHub release notes for Portable API v$VERSION." \
+            '. + {changelog:$changelog, changelogType:"markdown"}' \
+            "$TARGET_DIR/upload-metadata.json" > "$META"
           curl --fail-with-body -X POST "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \
             -H "X-Api-Token: $CURSEFORGE_TOKEN" \
             -F "metadata=@$META;type=application/json" \

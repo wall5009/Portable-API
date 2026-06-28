@@ -27,16 +27,35 @@ dependencies {
 }
 
 tasks.named('processResources') {
-    inputs.properties(
+    def resourceProperties = [
             mod_id: rootProject.ext.templateModId,
             mod_name: 'Portable Template',
             mod_version: project.version,
             api_mod_id: rootProject.ext.apiModId,
             minecraft_version: providers.gradleProperty('minecraft_1211').get(),
             loader_version: providers.gradleProperty('fabric_loader').get()
-    )
+    ]
+    filteringCharset = 'UTF-8'
+    inputs.properties(resourceProperties)
+
     filesMatching('fabric.mod.json') {
-        expand inputs.properties
+        expand(resourceProperties)
+    }
+
+    def processedMetadata = project.layout.buildDirectory.file('resources/main/fabric.mod.json')
+    outputs.upToDateWhen {
+        def metadataFile = processedMetadata.get().asFile
+        !metadataFile.isFile() || !metadataFile.getText('UTF-8').contains('${')
+    }
+
+    doLast {
+        def metadataFile = processedMetadata.get().asFile
+        if (!metadataFile.isFile()) {
+            throw new GradleException("Expected processed metadata was not created: ${metadataFile}")
+        }
+        if (metadataFile.getText('UTF-8').contains('${')) {
+            throw new GradleException("Unresolved resource placeholder remains in ${metadataFile}")
+        }
     }
 }
 
