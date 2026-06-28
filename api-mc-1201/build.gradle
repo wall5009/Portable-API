@@ -1,0 +1,13 @@
+plugins {
+    id 'net.neoforged.moddev.legacyforge'
+}
+
+// Vanilla mode provides official-name Minecraft classes without tying this
+// common adapter module to Forge runtime APIs.
+legacyForge {
+    mcpVersion = providers.gradleProperty('minecraft_1201').get()
+}
+
+dependencies {
+    api project(':api-core')
+}

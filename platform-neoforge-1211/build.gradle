@@ -1,0 +1,69 @@
+plugins {
+    id 'net.neoforged.moddev'
+}
+
+neoForge {
+    version = providers.gradleProperty('neoforge_1211').get()
+    validateAccessTransformers = true
+    runs {
+        client {
+            client()
+            gameDirectory = project.file('runs/neoforge-1211-client')
+        }
+        server {
+            server()
+            gameDirectory = project.file('runs/neoforge-1211-server')
+        }
+        data {
+            data()
+            gameDirectory = project.file('runs/neoforge-1211-data')
+        }
+        gameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('runs/neoforge-1211-gametest')
+        }
+    }
+    mods {
+        portable_api {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+dependencies {
+    compileOnly project(':api-core')
+    compileOnly project(':api-mc-1211')
+    testImplementation project(':api-core')
+}
+
+tasks.named('processResources') {
+    inputs.properties(
+            mod_id: rootProject.ext.apiModId,
+            mod_name: 'Portable API',
+            mod_version: project.version,
+            minecraft_version: providers.gradleProperty('minecraft_1211').get(),
+            neoforge_version: providers.gradleProperty('neoforge_1211').get()
+    )
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand inputs.properties
+    }
+}
+
+tasks.named('jar') {
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+    from project(':api-core').sourceSets.main.output
+    from project(':api-mc-1211').sourceSets.main.output
+    manifest {
+        attributes(
+                'Implementation-Title': 'Portable API NeoForge 1.21.1',
+                'Implementation-Version': project.version,
+                'Automatic-Module-Name': 'dev.portablemc.api.neoforge1211'
+        )
+    }
+}
+
+tasks.named('sourcesJar') {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from project(':api-core').sourceSets.main.allSource
+    from project(':api-mc-1211').sourceSets.main.allSource
+}

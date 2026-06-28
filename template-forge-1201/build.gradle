@@ -1,0 +1,58 @@
+plugins {
+    id 'net.neoforged.moddev.legacyforge'
+}
+
+legacyForge {
+    version = providers.gradleProperty('forge_1201').get()
+    validateAccessTransformers = true
+    runs {
+        client {
+            client()
+            gameDirectory = project.file('runs/template-forge-1201-client')
+        }
+        server {
+            server()
+            gameDirectory = project.file('runs/template-forge-1201-server')
+        }
+        data {
+            data()
+            gameDirectory = project.file('runs/template-forge-1201-data')
+        }
+        gameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('runs/template-forge-1201-gametest')
+        }
+    }
+    mods {
+        portable_template {
+            sourceSet sourceSets.main
+        }
+        portable_api {
+            sourceSet project(':platform-forge-1201').sourceSets.main
+        }
+    }
+}
+
+dependencies {
+    implementation project(':template-common')
+    implementation project(':platform-forge-1201')
+}
+
+tasks.named('processResources') {
+    inputs.properties(
+            mod_id: rootProject.ext.templateModId,
+            mod_name: 'Portable Template',
+            mod_version: project.version,
+            api_mod_id: rootProject.ext.apiModId,
+            minecraft_version: providers.gradleProperty('minecraft_1201').get(),
+            forge_version: providers.gradleProperty('forge_1201').get()
+    )
+    filesMatching('META-INF/mods.toml') {
+        expand inputs.properties
+    }
+}
+
+tasks.named('jar') {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from project(':template-common').sourceSets.main.output
+}

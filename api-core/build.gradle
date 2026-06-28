@@ -1,0 +1,3 @@
+// Pure Java API contracts. This module must never depend on Minecraft or any loader.
+dependencies {
+}

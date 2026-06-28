@@ -1,0 +1,69 @@
+plugins {
+    id 'net.neoforged.moddev.legacyforge'
+}
+
+legacyForge {
+    version = providers.gradleProperty('forge_1201').get()
+    validateAccessTransformers = true
+    runs {
+        client {
+            client()
+            gameDirectory = project.file('runs/forge-1201-client')
+        }
+        server {
+            server()
+            gameDirectory = project.file('runs/forge-1201-server')
+        }
+        data {
+            data()
+            gameDirectory = project.file('runs/forge-1201-data')
+        }
+        gameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('runs/forge-1201-gametest')
+        }
+    }
+    mods {
+        portable_api {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+dependencies {
+    compileOnly project(':api-core')
+    compileOnly project(':api-mc-1201')
+    testImplementation project(':api-core')
+}
+
+tasks.named('processResources') {
+    inputs.properties(
+            mod_id: rootProject.ext.apiModId,
+            mod_name: 'Portable API',
+            mod_version: project.version,
+            minecraft_version: providers.gradleProperty('minecraft_1201').get(),
+            forge_version: providers.gradleProperty('forge_1201').get()
+    )
+    filesMatching('META-INF/mods.toml') {
+        expand inputs.properties
+    }
+}
+
+tasks.named('jar') {
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+    from project(':api-core').sourceSets.main.output
+    from project(':api-mc-1201').sourceSets.main.output
+    manifest {
+        attributes(
+                'Implementation-Title': 'Portable API Forge 1.20.1',
+                'Implementation-Version': project.version,
+                'Automatic-Module-Name': 'dev.portablemc.api.forge1201'
+        )
+    }
+}
+
+tasks.named('sourcesJar') {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from project(':api-core').sourceSets.main.allSource
+    from project(':api-mc-1201').sourceSets.main.allSource
+}

@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Fabric 1.21.1 Client" type="GradleRunConfiguration" factoryName="Gradle">
+    <ExternalSystemSettings>
+      <option name="externalProjectPath" value="$PROJECT_DIR$" />
+      <option name="gradleJvm" value="#JAVA_HOME" />
+      <option name="modules"><set><option value="$PROJECT_DIR$" /></set></option>
+      <option name="taskNames"><list><option value=":template-fabric-1211:runClient" /></list></option>
+    </ExternalSystemSettings>
+    <method v="2" />
+  </configuration>
+</component>

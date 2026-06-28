@@ -1,0 +1,46 @@
+plugins {
+    id 'fabric-loom'
+}
+
+loom {
+    runs {
+        client {
+            client()
+            configName = 'Template Fabric 1.21.1 Client'
+            runDir = 'runs/template-fabric-1211-client'
+        }
+        server {
+            server()
+            configName = 'Template Fabric 1.21.1 Server'
+            runDir = 'runs/template-fabric-1211-server'
+        }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${providers.gradleProperty('minecraft_1211').get()}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${providers.gradleProperty('fabric_loader').get()}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty('fabric_api_1211').get()}"
+    implementation project(':platform-fabric-1211')
+    implementation project(':template-common')
+}
+
+tasks.named('processResources') {
+    inputs.properties(
+            mod_id: rootProject.ext.templateModId,
+            mod_name: 'Portable Template',
+            mod_version: project.version,
+            api_mod_id: rootProject.ext.apiModId,
+            minecraft_version: providers.gradleProperty('minecraft_1211').get(),
+            loader_version: providers.gradleProperty('fabric_loader').get()
+    )
+    filesMatching('fabric.mod.json') {
+        expand inputs.properties
+    }
+}
+
+tasks.named('jar') {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from project(':template-common').sourceSets.main.output
+}

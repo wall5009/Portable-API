@@ -1,0 +1,265 @@
+plugins {
+    id 'fabric-loom' version '1.13.6' apply false
+    id 'net.neoforged.moddev' version '2.0.141' apply false
+    id 'net.neoforged.moddev.legacyforge' version '2.0.141' apply false
+}
+
+ext {
+    apiModId = 'portable_api'
+    templateModId = 'portable_template'
+    javaForProject = { Project p ->
+        (p.name.endsWith('1211')) ? 21 : 17
+    }
+}
+
+allprojects {
+    group = providers.gradleProperty('group').get()
+    version = providers.gradleProperty('version').get()
+}
+
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'maven-publish'
+    apply plugin: 'checkstyle'
+
+    base {
+        archivesName = "${rootProject.name}-${project.name}"
+    }
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(rootProject.ext.javaForProject(project))
+        }
+        withSourcesJar()
+        withJavadocJar()
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.release = rootProject.ext.javaForProject(project)
+        options.compilerArgs.addAll([
+                '-Xlint:all',
+                '-Xlint:-processing',
+                '-Werror'
+        ])
+    }
+
+    tasks.withType(Javadoc).configureEach {
+        options.encoding = 'UTF-8'
+        options.addBooleanOption('Xdoclint:all,-missing', true)
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+        testLogging {
+            events 'failed', 'skipped'
+            exceptionFormat 'full'
+        }
+    }
+
+    checkstyle {
+        toolVersion = '10.26.1'
+        configDirectory = rootProject.layout.projectDirectory.dir('config/checkstyle')
+        maxWarnings = 0
+    }
+
+    dependencyLocking {
+        lockAllConfigurations()
+    }
+
+    dependencies {
+        testImplementation platform("org.junit:junit-bom:${providers.gradleProperty('junit').get()}")
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+
+    tasks.register('validateLicenseHeaders') {
+        group = 'verification'
+        description = 'Fails when Java source files do not carry the project license header.'
+        inputs.files(fileTree('src') {
+            include '**/*.java'
+            exclude '**/generated/**'
+        })
+        doLast {
+            def missing = inputs.files.files.findAll { file ->
+                file.isFile() && !file.text.startsWith('/*\n * MIT License\n')
+            }
+            if (!missing.empty) {
+                throw new GradleException("Missing license header in ${project.path}: ${missing.collect { project.relativePath(it) }.join(', ')}")
+            }
+        }
+    }
+
+    tasks.register('dependencyBoundaryCheck') {
+        group = 'verification'
+        description = 'Checks that common modules do not import loader-only packages.'
+        inputs.files(fileTree('src/main/java') { include '**/*.java' })
+        doLast {
+            def banned = []
+            if (project.name in ['api-core', 'template-common']) {
+                banned.addAll(['net.fabricmc.', 'net.minecraftforge.', 'net.neoforged.', 'net.minecraft.'])
+            }
+            if (project.name.startsWith('api-mc-')) {
+                banned.addAll(['net.fabricmc.', 'net.minecraftforge.', 'net.neoforged.'])
+            }
+            if (project.name.contains('fabric')) {
+                banned.addAll(['net.minecraftforge.', 'net.neoforged.'])
+            }
+            if (project.name.contains('neoforge')) {
+                banned.addAll(['net.fabricmc.', 'net.minecraftforge.'])
+            } else if (project.name.contains('forge-')) {
+                banned.addAll(['net.fabricmc.', 'net.neoforged.'])
+            }
+            def violations = []
+            inputs.files.files.each { file ->
+                def text = file.text
+                banned.each { token ->
+                    if (text.contains(token)) {
+                        violations << "${project.relativePath(file)} contains ${token}"
+                    }
+                }
+            }
+            if (!violations.empty) {
+                throw new GradleException("Dependency boundary violations in ${project.path}:\n - ${violations.join('\n - ')}")
+            }
+        }
+    }
+
+    tasks.named('check') {
+        dependsOn 'validateLicenseHeaders', 'dependencyBoundaryCheck'
+    }
+
+    publishing {
+        publications {
+            mavenJava(MavenPublication) {
+                from components.java
+                artifactId = "${rootProject.name}-${project.name}"
+                pom {
+                    name = "Portable API ${project.name}"
+                    description = providers.gradleProperty('project_description')
+                    url = providers.gradleProperty('project_url')
+                    licenses {
+                        license {
+                            name = providers.gradleProperty('project_license')
+                            url = 'https://opensource.org/license/mit/'
+                        }
+                    }
+                    developers {
+                        developer {
+                            id = 'portablemc'
+                            name = providers.gradleProperty('project_vendor')
+                        }
+                    }
+                    scm {
+                        connection = 'scm:git:https://github.com/portablemc/portable-api.git'
+                        developerConnection = 'scm:git:ssh://git@github.com:portablemc/portable-api.git'
+                        url = providers.gradleProperty('project_url')
+                    }
+                }
+            }
+        }
+        repositories {
+            maven {
+                name = 'staging'
+                url = rootProject.layout.buildDirectory.dir('staging-maven')
+            }
+            if (providers.environmentVariable('MAVEN_PUBLISH_URL').isPresent()) {
+                maven {
+                    name = 'remote'
+                    url = uri(providers.environmentVariable('MAVEN_PUBLISH_URL').get())
+                    credentials {
+                        username = providers.environmentVariable('MAVEN_USERNAME').orElse('').get()
+                        password = providers.environmentVariable('MAVEN_PASSWORD').orElse('').get()
+                    }
+                }
+            }
+        }
+    }
+}
+
+tasks.register('dependencyBoundaryCheck') {
+    group = 'verification'
+    description = 'Runs dependency-boundary checks for every module.'
+    dependsOn subprojects.collect { it.tasks.named('dependencyBoundaryCheck') }
+}
+
+tasks.register('check') {
+    group = 'verification'
+    description = 'Runs verification for every module.'
+    dependsOn subprojects.collect { it.tasks.named('check') }
+}
+
+tasks.register('validateGeneratedResources') {
+    group = 'verification'
+    description = 'Ensures generated template resource files exist after the template resource task runs.'
+    dependsOn ':template-common:generatePortableTemplateResources'
+    doLast {
+        def expected = [
+                file('template-common/build/generated/portable-template/assets/portable_template/lang/en_us.json'),
+                file('template-common/build/generated/portable-template/assets/portable_template/models/item/portable_block.json'),
+                file('template-common/build/generated/portable-template/data/portable_template/tags/blocks/mineable/pickaxe.json')
+        ]
+        def missing = expected.findAll { !it.isFile() }
+        if (!missing.empty) {
+            throw new GradleException("Generated resource validation failed. Missing: ${missing.collect { relativePath(it) }.join(', ')}")
+        }
+    }
+}
+
+tasks.register('verifyArtifacts') {
+    group = 'verification'
+    description = 'Checks that release jars are produced and do not contain obviously incompatible loader namespaces.'
+    dependsOn subprojects.collect { it.tasks.named('assemble') }
+    doLast {
+        def required = [
+                'platform-fabric-1201',
+                'platform-forge-1201',
+                'platform-fabric-1211',
+                'platform-neoforge-1211',
+                'template-fabric-1201',
+                'template-forge-1201',
+                'template-fabric-1211',
+                'template-neoforge-1211'
+        ]
+        required.each { module ->
+            def libs = project(":${module}").layout.buildDirectory.dir('libs').get().asFile
+            def jars = libs.listFiles({ File file -> file.name.endsWith('.jar') && !file.name.endsWith('-sources.jar') && !file.name.endsWith('-javadoc.jar') } as FileFilter)
+            if (jars == null || jars.length == 0) {
+                throw new GradleException("No runtime jar found for ${module} in ${libs}")
+            }
+        }
+    }
+}
+
+tasks.register('generatePublicationChecksums') {
+    group = 'publishing'
+    description = 'Writes SHA-256 and SHA-512 checksums next to all staged Maven artifacts.'
+    dependsOn subprojects.collect { it.tasks.named('publishAllPublicationsToStagingRepository') }
+    doLast {
+        def staged = layout.buildDirectory.dir('staging-maven').get().asFile
+        if (!staged.exists()) {
+            throw new GradleException("No staged Maven repository found at ${staged}")
+        }
+        staged.eachFileRecurse { file ->
+            if (file.isFile() && !(file.name.endsWith('.sha256') || file.name.endsWith('.sha512') || file.name.endsWith('.md5') || file.name.endsWith('.sha1'))) {
+                ['SHA-256': 'sha256', 'SHA-512': 'sha512'].each { algorithm, extension ->
+                    def digest = java.security.MessageDigest.getInstance(algorithm)
+                    file.withInputStream { input ->
+                        byte[] buffer = new byte[8192]
+                        int read
+                        while ((read = input.read(buffer)) != -1) {
+                            digest.update(buffer, 0, read)
+                        }
+                    }
+                    new File(file.parentFile, "${file.name}.${extension}").text = digest.digest().encodeHex().toString()
+                }
+            }
+        }
+    }
+}
+
+tasks.register('releaseBuild') {
+    group = 'release'
+    description = 'Runs the full local release gate: tests, validation, artifact checks, staging publication, and checksums.'
+    dependsOn 'check', 'validateGeneratedResources', 'verifyArtifacts', 'generatePublicationChecksums'
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "Small cross-loader foundation API for Minecraft ${minecraft_version}.",
+  "authors": [
+    "PortableMC"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "${minecraft_version}",
+    "fabric-api": "*"
+  },
+  "custom": {
+    "portable_api_target": "fabric-${minecraft_version}"
+  }
+}

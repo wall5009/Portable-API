@@ -1,0 +1,13 @@
+plugins {
+    id 'net.neoforged.moddev'
+}
+
+// NeoForm is the official NeoForged vanilla pipeline for cross-loader common
+// code that needs Minecraft classes but no loader extensions.
+neoForge {
+    neoFormVersion = providers.gradleProperty('neoform_1211').get()
+}
+
+dependencies {
+    api project(':api-core')
+}

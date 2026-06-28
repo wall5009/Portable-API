@@ -1,0 +1,47 @@
+dependencies {
+    api project(':api-core')
+}
+
+def generatedTemplateResources = layout.buildDirectory.dir('generated/portable-template')
+
+tasks.register('generatePortableTemplateResources') {
+    group = 'datagen'
+    description = 'Generates the minimal resources used by the copyable template mod.'
+    outputs.dir(generatedTemplateResources)
+    doLast {
+        def root = generatedTemplateResources.get().asFile
+        def files = [
+                'assets/portable_template/lang/en_us.json':
+                        '{\n  "block.portable_template.portable_block": "Portable Block",\n  "item.portable_template.portable_item": "Portable Item"\n}\n',
+                'assets/portable_template/models/block/portable_block.json':
+                        '{\n  "parent": "minecraft:block/cube_all",\n  "textures": { "all": "minecraft:block/stone" }\n}\n',
+                'assets/portable_template/models/item/portable_block.json':
+                        '{\n  "parent": "portable_template:block/portable_block"\n}\n',
+                'assets/portable_template/models/item/portable_item.json':
+                        '{\n  "parent": "minecraft:item/generated",\n  "textures": { "layer0": "minecraft:item/iron_ingot" }\n}\n',
+                'assets/portable_template/blockstates/portable_block.json':
+                        '{\n  "variants": { "": { "model": "portable_template:block/portable_block" } }\n}\n',
+                'data/portable_template/tags/blocks/mineable/pickaxe.json':
+                        '{\n  "replace": false,\n  "values": [ "portable_template:portable_block" ]\n}\n'
+        ]
+        files.each { path, content ->
+            def out = new File(root, path)
+            out.parentFile.mkdirs()
+            out.text = content
+        }
+    }
+}
+
+sourceSets {
+    main {
+        resources.srcDir generatedTemplateResources
+    }
+}
+
+tasks.named('processResources') {
+    dependsOn 'generatePortableTemplateResources'
+}
+
+tasks.named('sourcesJar') {
+    dependsOn 'generatePortableTemplateResources'
+}
