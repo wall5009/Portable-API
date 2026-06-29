@@ -1,21 +1,21 @@
 # Troubleshooting
 
-## Gradle says Loom requires Java 21
+## Gradle Uses Java 17
 
-Run Gradle with Java 21. The build still compiles Minecraft 1.20.1 modules with a Java 17 toolchain.
+Loom `1.13.6` requires Gradle to run on Java 21. Set `JAVA_HOME` to a Java 21 JDK and rerun with `--no-daemon` if an old daemon was started.
 
-## Creative tab constants are inaccessible
+## API Compatibility Fails
 
-That is expected in official mappings for supported versions. Portable API constructs public `ResourceKey` values in version-specific adapters.
+Do not delete public v1.0.0 methods. Add a compatibility shim or deprecate the old method.
 
-## Fabric template run cannot find `portable_api`
+## License Headers Fail
 
-During local development, run the API Fabric target and template target together or install the built `platform-fabric-*` API jar next to the template jar. The template metadata models the production dependency explicitly.
+Java files must start with the All Rights Reserved header shown in `CONTRIBUTING.md`.
 
-## A common module needs Minecraft classes
+## Generated Resources Fail
 
-Create or use a version-specific common module. Do not add Minecraft imports to `api-core` or to a mod’s pure common module.
+Run `:template-common:generatePortableTemplateResources`, then `validateGeneratedResources`.
 
-## Release publishing skipped
+## Packet Send Is Unsupported
 
-The release workflow honors dry-run mode by default and requires repository secrets for Maven, Modrinth, and CurseForge publishing.
+Move loader-specific payload send, tracking, or broadcast behavior into the matching platform module unless it is represented by the portable packet contract.

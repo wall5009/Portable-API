@@ -1,19 +1,13 @@
 # Architecture
 
-Portable API separates three concerns.
+Portable API keeps boundaries explicit:
 
-`api-core` contains the stable author-facing API. It has no Minecraft or loader types, which keeps shared mod code portable and testable with normal JUnit.
+- `api-core`: pure Java API and contracts. No Minecraft, Fabric, Forge, or NeoForge imports.
+- `api-mc-1201` and `api-mc-1211`: Minecraft-version adapters and Brigadier conversion helpers.
+- `platform-*`: loader bootstraps, mod metadata, registry bridges, lifecycle event bridges, platform services, and loader-specific boundaries.
+- `template-common`: one shared template mod.
+- `template-*`: thin loader entrypoints and metadata for the template.
 
-`api-mc-*` modules contain version-specific Minecraft adapters. The 1.20.1 and 1.21.1 adapters both create simple blocks and items, but they differ where Minecraft differs, such as `ResourceLocation` creation. This prevents unsafe differences from being hidden behind one misleading helper.
+Platform jars include `api-core` and the matching `api-mc-*` output so consumers install one Portable API jar matching their loader and Minecraft version.
 
-`platform-*` modules bridge the core SPI to each loader. Fabric registers directly with vanilla registries during initialization. Forge and NeoForge use deferred registers and event-bus callbacks.
-
-The public bootstrap flow is explicit:
-
-1. Loader entrypoint receives control from Fabric, Forge, or NeoForge.
-2. Entrypoint calls the matching `*Bootstrap.initialize(...)`.
-3. The bootstrap builds a `PortableModContext` with loader-backed services.
-4. Shared code registers content, commands, config hooks, lifecycle callbacks, data generation, and network declarations.
-5. Loader bridges fire lifecycle callbacks at the nearest stable equivalent.
-
-Networking is declaration-only in V1. Payload send/receive APIs differ enough across these four targets that a universal payload abstraction would be misleading without a larger protocol design.
+Complex systems whose semantics differ materially are intentionally not abstracted: block entities, menus, renderers, entities, capabilities, attachments, and tracking-specific networking.

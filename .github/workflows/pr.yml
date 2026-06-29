@@ -20,8 +20,8 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Check core API and generated resources
-        run: ./gradlew :api-core:check validateGeneratedResources --stacktrace
+      - name: Check API, boundaries, compatibility, and generated resources
+        run: ./gradlew check checkApiCompatibility dependencyBoundaryCheck validateGeneratedResources --stacktrace
 
   compile-matrix:
     name: Compile ${{ matrix.target }}
@@ -50,7 +50,7 @@ jobs:
         run: ./gradlew ${{ matrix.tasks }} --stacktrace
 
   artifacts:
-    name: Artifact verification
+    name: Distribution dry run
     runs-on: ubuntu-latest
     needs: compile-matrix
     steps:
@@ -60,11 +60,13 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Assemble and verify artifacts
-        run: ./gradlew verifyArtifacts --stacktrace
+      - name: Build and verify release layout
+        run: ./gradlew fullDistributionBuild -PreleaseChannel=beta --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: portable-api-pr-artifacts
+          if-no-files-found: error
           path: |
             **/build/libs/*.jar
-            !**/build/libs/*-dev.jar
+            build/release/**
+            build/distributions/**

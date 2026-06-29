@@ -1,17 +1,5 @@
 /*
- * MIT License
- *
- * Copyright (c) 2026 PortableMC
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * Copyright (c) 2026 PortableMC. All Rights Reserved.
  */
 package dev.portablemc.api.content;
 
@@ -33,6 +21,7 @@ public final class PortableContentRegistry {
     private final PortableContentAdapter adapter;
     private final Set<PortableIdentifier> blocks = new HashSet<>();
     private final Set<PortableIdentifier> items = new HashSet<>();
+    private final Set<PortableIdentifier> customTabs = new HashSet<>();
 
     /**
      * Creates a content registry.
@@ -94,6 +83,50 @@ public final class PortableContentRegistry {
             throw new IllegalArgumentException("Cannot add unregistered item to creative tab: " + item.id());
         }
         adapter.addCreativeTabEntry(new PortableCreativeTabEntry(tab, item.id()));
+    }
+
+    /**
+     * Registers a simple custom creative tab.
+     *
+     * @param path tab path under this mod id
+     * @param translationKey tab title translation key
+     * @param icon item handle used as the tab icon
+     * @return tab handle
+     */
+    public PortableRegistryHandle<PortableCreativeTabDefinition> registerCreativeTab(
+            final String path,
+            final String translationKey,
+            final PortableRegistryHandle<PortableItemDefinition> icon
+    ) {
+        Objects.requireNonNull(icon, "icon");
+        if (!items.contains(icon.id())) {
+            throw new IllegalArgumentException("Cannot use unregistered item as creative tab icon: " + icon.id());
+        }
+        PortableIdentifier id = PortableIdentifier.of(modId, path);
+        reserve(customTabs, id, "creative tab");
+        PortableCreativeTabDefinition definition = new PortableCreativeTabDefinition(id, translationKey, icon.id());
+        return adapter.registerCreativeTab(definition);
+    }
+
+    /**
+     * Adds an item to a custom creative tab declared through this registry.
+     *
+     * @param tab custom tab handle
+     * @param item item handle
+     */
+    public void addToCreativeTab(
+            final PortableRegistryHandle<PortableCreativeTabDefinition> tab,
+            final PortableRegistryHandle<PortableItemDefinition> item
+    ) {
+        Objects.requireNonNull(tab, "tab");
+        Objects.requireNonNull(item, "item");
+        if (!customTabs.contains(tab.id())) {
+            throw new IllegalArgumentException("Cannot add item to unknown custom creative tab: " + tab.id());
+        }
+        if (!items.contains(item.id())) {
+            throw new IllegalArgumentException("Cannot add unregistered item to custom creative tab: " + item.id());
+        }
+        adapter.addCustomCreativeTabEntry(new PortableCustomCreativeTabEntry(tab.id(), item.id()));
     }
 
     private static void reserve(final Set<PortableIdentifier> ids, final PortableIdentifier id, final String kind) {

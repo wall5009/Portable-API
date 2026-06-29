@@ -1,30 +1,23 @@
 # Publishing
 
-`releaseBuild` stages Maven publications under `build/staging-maven` and writes SHA-256/SHA-512 checksums.
+Run:
 
 ```powershell
-.\gradlew.bat releaseBuild
+.\gradlew.bat clean fullDistributionBuild
 ```
 
-The GitHub release workflow supports:
+The Maven staging repository is written to `build/staging-maven`.
 
-- Maven staging artifacts.
-- GitHub Release uploads.
-- Modrinth version creation for the template mod.
-- CurseForge uploads for the template mod.
-- Dry-run mode.
+Published API coordinates:
 
-Required secrets:
+- `dev.portablemc:portable-api-api-core:1.1.0`
+- `dev.portablemc:portable-api-api-mc-1201:1.1.0`
+- `dev.portablemc:portable-api-api-mc-1211:1.1.0`
+- `dev.portablemc:portable-api-platform-fabric-1201:1.1.0`
+- `dev.portablemc:portable-api-platform-forge-1201:1.1.0`
+- `dev.portablemc:portable-api-platform-fabric-1211:1.1.0`
+- `dev.portablemc:portable-api-platform-neoforge-1211:1.1.0`
 
-| Secret | Purpose |
-| --- | --- |
-| `MAVEN_USERNAME` | Remote Maven username |
-| `MAVEN_PASSWORD` | Remote Maven password/token |
-| `MAVEN_PUBLISH_URL` | Remote Maven repository URL |
-| `MODRINTH_TOKEN` | Modrinth token with version-write permission |
-| `MODRINTH_PROJECT_ID` | Modrinth project id for the template mod |
-| `MODRINTH_API_PROJECT_ID` | Modrinth project id for Portable API, used as a required dependency |
-| `CURSEFORGE_TOKEN` | CurseForge upload token |
-| `CURSEFORGE_PROJECT_ID` | CurseForge project id for the template mod |
+POM license metadata is `All Rights Reserved`.
 
-Release channels should be one of `alpha`, `beta`, or `release`. Declare loaders and game versions per artifact; do not upload a Forge jar as a NeoForge file or a 1.20.1 jar as a 1.21.1 file.
+Remote Maven publishing uses `MAVEN_PUBLISH_URL`, `MAVEN_USERNAME`, and `MAVEN_PASSWORD`.

@@ -1,23 +1,13 @@
 /*
- * MIT License
- *
- * Copyright (c) 2026 PortableMC
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * Copyright (c) 2026 PortableMC. All Rights Reserved.
  */
 package dev.portablemc.api.spi;
 
 import dev.portablemc.api.content.PortableBlockDefinition;
 import dev.portablemc.api.content.PortableBlockRegistration;
 import dev.portablemc.api.content.PortableCreativeTabEntry;
+import dev.portablemc.api.content.PortableCreativeTabDefinition;
+import dev.portablemc.api.content.PortableCustomCreativeTabEntry;
 import dev.portablemc.api.content.PortableItemDefinition;
 import dev.portablemc.api.content.PortableRegistryHandle;
 
@@ -51,4 +41,25 @@ public interface PortableContentAdapter {
      * @param entry creative-tab entry
      */
     void addCreativeTabEntry(PortableCreativeTabEntry entry);
+
+    /**
+     * Registers a simple custom creative tab.
+     *
+     * @param definition creative-tab declaration
+     * @return creative-tab handle
+     */
+    default PortableRegistryHandle<PortableCreativeTabDefinition> registerCreativeTab(
+            final PortableCreativeTabDefinition definition
+    ) {
+        throw new UnsupportedOperationException("Portable custom creative tabs are not implemented by this adapter");
+    }
+
+    /**
+     * Adds an item to a custom creative tab.
+     *
+     * @param entry custom creative-tab entry
+     */
+    default void addCustomCreativeTabEntry(final PortableCustomCreativeTabEntry entry) {
+        throw new UnsupportedOperationException("Portable custom creative tab entries are not implemented by this adapter");
+    }
 }

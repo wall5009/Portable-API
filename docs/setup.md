@@ -1,23 +1,13 @@
 # Setup
 
-## Requirements
-
-- Java 21 for running Gradle.
-- Java 17 and Java 21 toolchains available locally or resolvable by Gradle.
-- IntelliJ IDEA 2025.3 or newer recommended.
-- Network access to Maven Central, Fabric Maven, MinecraftForge Maven, and NeoForged Maven.
-
-## Import
-
-Open the repository root in IntelliJ and import as a Gradle project. The committed run configurations are Gradle run configurations and use `$PROJECT_DIR$`, so they do not contain local paths.
-
-## Development Commands
+Use Java 21 to run Gradle.
 
 ```powershell
-.\gradlew.bat :api-core:check validateGeneratedResources
-.\gradlew.bat :platform-fabric-1201:runClient
-.\gradlew.bat :platform-forge-1201:runServer
-.\gradlew.bat :template-neoforge-1211:runGameTestServer
+$env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot'
+$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
+.\gradlew.bat check
 ```
 
-Use target-specific run tasks while developing. Use `releaseBuild` before publishing.
+Open the repository root in IntelliJ as a Gradle project. The committed `.idea/runConfigurations` entries are Gradle run configurations and use `$PROJECT_DIR$`.
+
+Do not commit generated `runs/`, `.gradle/`, `build/`, workspace state, credentials, caches, or local paths.

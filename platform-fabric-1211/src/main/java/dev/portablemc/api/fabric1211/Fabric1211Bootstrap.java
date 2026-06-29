@@ -1,17 +1,5 @@
 /*
- * MIT License
- *
- * Copyright (c) 2026 PortableMC
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * Copyright (c) 2026 PortableMC. All Rights Reserved.
  */
 package dev.portablemc.api.fabric1211;
 
@@ -22,11 +10,12 @@ import dev.portablemc.api.PlatformInfo;
 import dev.portablemc.api.PortableLifecycleEvents;
 import dev.portablemc.api.PortableLogger;
 import dev.portablemc.api.PortableMod;
+import dev.portablemc.api.PortablePlatformServices;
 import dev.portablemc.api.PortableServerContext;
 import dev.portablemc.api.RuntimeSide;
 import dev.portablemc.api.command.PortableCommand;
-import dev.portablemc.api.command.PortableCommandContext;
 import dev.portablemc.api.command.PortableCommandManager;
+import dev.portablemc.api.command.PortableCommandTree;
 import dev.portablemc.api.config.PortableConfigManager;
 import dev.portablemc.api.content.PortableBlockDefinition;
 import dev.portablemc.api.content.PortableBlockRegistration;
@@ -35,8 +24,10 @@ import dev.portablemc.api.content.PortableCreativeTabEntry;
 import dev.portablemc.api.content.PortableItemDefinition;
 import dev.portablemc.api.content.PortableRegistryHandle;
 import dev.portablemc.api.internal.DefaultPortableModContext;
+import dev.portablemc.api.mc1211.Minecraft1211CommandAdapters;
 import dev.portablemc.api.mc1211.Minecraft1211Adapters;
 import dev.portablemc.api.network.PortableNetworkChannel;
+import dev.portablemc.api.network.PortablePacketRegistration;
 import dev.portablemc.api.network.PortableNetworking;
 import dev.portablemc.api.spi.PortableCommandAdapter;
 import dev.portablemc.api.spi.PortableContentAdapter;
@@ -51,13 +42,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.commands.Commands;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.storage.LevelResource;
@@ -110,6 +101,12 @@ public final class Fabric1211Bootstrap {
                 Optional.of(loader.getGameDir()),
                 loader.getConfigDir()
         );
+        PortablePlatformServices platformServices = PortablePlatformServices.builder(platform)
+                .modLoaded(loader::isModLoaded)
+                .modVersion(id -> loader.getModContainer(id)
+                        .map(container -> container.getMetadata().getVersion().getFriendlyString()))
+                .developmentEnvironment(loader.isDevelopmentEnvironment())
+                .build();
         PortableLifecycleEvents lifecycle = new PortableLifecycleEvents();
         return new DefaultPortableModContext(
                 modId,
@@ -119,7 +116,8 @@ public final class Fabric1211Bootstrap {
                 new PortableContentRegistry(modId, runtime),
                 new PortableCommandManager(runtime),
                 new PortableConfigManager(platform.configDirectory()),
-                new PortableNetworking(modId, runtime)
+                new PortableNetworking(modId, runtime),
+                platformServices
         );
     }
 
@@ -127,6 +125,8 @@ public final class Fabric1211Bootstrap {
         private final String modId;
         private final Map<dev.portablemc.api.PortableIdentifier, Item> items = new ConcurrentHashMap<>();
         private final List<PortableCommand> commands = new ArrayList<>();
+        private final List<PortableCommandTree> commandTrees = new ArrayList<>();
+        private final List<PortablePacketRegistration<?>> packetRegistrations = new ArrayList<>();
 
         private FabricRuntime(final String modId) {
             this.modId = Objects.requireNonNull(modId, "modId");
@@ -134,10 +134,16 @@ public final class Fabric1211Bootstrap {
 
         private void installEventBridges(final DefaultPortableModContext context) {
             CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> registerCommands(dispatcher));
-            ServerLifecycleEvents.SERVER_STARTING.register(server -> {
-                Path worldPath = server.getWorldPath(LevelResource.ROOT);
-                context.lifecycle().fireServerStarting(new PortableServerContext(worldPath));
-            });
+            ServerLifecycleEvents.SERVER_STARTING.register(server -> context.lifecycle().fireServerStarting(serverContext(server)));
+            ServerLifecycleEvents.SERVER_STARTED.register(server -> context.lifecycle().fireServerStarted(serverContext(server)));
+            ServerLifecycleEvents.SERVER_STOPPING.register(server -> context.lifecycle().fireServerStopping(serverContext(server)));
+            ServerLifecycleEvents.SERVER_STOPPED.register(server -> context.lifecycle().fireServerStopped(serverContext(server)));
+            ServerTickEvents.END_SERVER_TICK.register(server -> context.lifecycle().fireServerTick(serverContext(server)));
+        }
+
+        private static PortableServerContext serverContext(final MinecraftServer server) {
+            Path worldPath = server.getWorldPath(LevelResource.ROOT);
+            return new PortableServerContext(worldPath);
         }
 
         @Override
@@ -179,19 +185,27 @@ public final class Fabric1211Bootstrap {
         }
 
         @Override
+        public void registerTree(final PortableCommandTree tree) {
+            commandTrees.add(tree);
+        }
+
+        @Override
         public void declare(final PortableNetworkChannel channel) {
             System.getLogger(modId).log(System.Logger.Level.DEBUG, "Declared portable network channel " + channel.id());
         }
 
+        @Override
+        public <T> void registerPacket(final PortablePacketRegistration<T> registration) {
+            packetRegistrations.add(registration);
+            System.getLogger(modId).log(System.Logger.Level.DEBUG, "Registered portable packet " + registration.type().id());
+        }
+
         private void registerCommands(final CommandDispatcher<CommandSourceStack> dispatcher) {
             for (PortableCommand command : commands) {
-                dispatcher.register(Commands.literal(command.name())
-                        .requires(source -> source.hasPermission(command.permissionLevel()))
-                        .executes(context -> {
-                            PortableCommandContext portableContext = message ->
-                                    context.getSource().sendSystemMessage(Component.literal(message));
-                            return command.executor().run(portableContext);
-                        }));
+                dispatcher.register(Minecraft1211CommandAdapters.literalCommand(command));
+            }
+            for (PortableCommandTree tree : commandTrees) {
+                dispatcher.register(Minecraft1211CommandAdapters.commandTree(tree));
             }
         }
     }

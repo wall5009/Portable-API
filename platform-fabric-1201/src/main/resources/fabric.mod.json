@@ -7,7 +7,7 @@
   "authors": [
     "PortableMC"
   ],
-  "license": "MIT",
+  "license": "All Rights Reserved",
   "environment": "*",
   "depends": {
     "fabricloader": ">=${loader_version}",

@@ -36,7 +36,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - id: version
         shell: bash
-        run: echo "version=$(grep '^version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION="$(grep '^version=' gradle.properties | cut -d= -f2)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid SemVer project version: $VERSION" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match project version v$VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Build complete distribution
         run: ./gradlew clean fullDistributionBuild -PreleaseChannel=${{ inputs.release_channel }} --stacktrace
       - name: Publish API Maven modules
@@ -68,11 +78,20 @@ jobs:
         with:
           name: portable-api-release-${{ needs.build.outputs.version }}
           path: dist
+      - name: Reject duplicate GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "GitHub release v$VERSION already exists." >&2
+            exit 1
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.build.outputs.version }}
           name: Portable API v${{ needs.build.outputs.version }}
-          generate_release_notes: true
+          body_path: dist/release/portable-api-${{ needs.build.outputs.version }}/github/RELEASE-NOTES.md
           prerelease: ${{ inputs.release_channel != 'release' }}
           files: |
             dist/release/portable-api-${{ needs.build.outputs.version }}/github/*.jar
@@ -107,9 +126,13 @@ jobs:
           test -n "$MODRINTH_TOKEN"
           test -n "$MODRINTH_PROJECT_ID"
           TARGET_DIR="dist/release/portable-api-$VERSION/modrinth/${{ matrix.target }}"
+          RELEASE_NOTES="dist/release/portable-api-$VERSION/RELEASE-NOTES.md"
           FILE=$(find "$TARGET_DIR" -maxdepth 1 -name '*.jar' | head -n1)
           test -n "$FILE"
-          DATA=$(jq --arg project "$MODRINTH_PROJECT_ID" '. + {project_id:$project, featured:false, file_parts:["file"]}' "$TARGET_DIR/upload-metadata.json")
+          test -s "$RELEASE_NOTES"
+          DATA=$(jq --arg project "$MODRINTH_PROJECT_ID" --rawfile changelog "$RELEASE_NOTES" \
+            '. + {project_id:$project, featured:false, file_parts:["file"], changelog:$changelog}' \
+            "$TARGET_DIR/upload-metadata.json")
           curl --fail-with-body -X POST https://api.modrinth.com/v2/version \
             -H "Authorization: $MODRINTH_TOKEN" \
             -F "data=$DATA" \
@@ -142,10 +165,12 @@ jobs:
           test -n "$CURSEFORGE_TOKEN"
           test -n "$CURSEFORGE_PROJECT_ID"
           TARGET_DIR="dist/release/portable-api-$VERSION/curseforge/${{ matrix.target }}"
+          RELEASE_NOTES="dist/release/portable-api-$VERSION/RELEASE-NOTES.md"
           FILE=$(find "$TARGET_DIR" -maxdepth 1 -name '*.jar' | head -n1)
           test -n "$FILE"
+          test -s "$RELEASE_NOTES"
           META=$(mktemp)
-          jq --arg changelog "See the GitHub release notes for Portable API v$VERSION." \
+          jq --rawfile changelog "$RELEASE_NOTES" \
             '. + {changelog:$changelog, changelogType:"markdown"}' \
             "$TARGET_DIR/upload-metadata.json" > "$META"
           curl --fail-with-body -X POST "https://minecraft.curseforge.com/api/projects/$CURSEFORGE_PROJECT_ID/upload-file" \

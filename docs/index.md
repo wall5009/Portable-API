@@ -1,19 +1,20 @@
 # Portable API Documentation
 
-Portable API V1 is a foundation layer for mods that want one shared Java implementation and thin loader entrypoints across:
+Portable API `1.1.0` is a small Java API for shared Minecraft mod code across Fabric/Forge 1.20.1 and Fabric/NeoForge 1.21.1.
 
-- Fabric 1.20.1
-- Forge 1.20.1
-- Fabric 1.21.1
-- NeoForge 1.21.1
+Read these pages first:
 
-Read these pages in order when starting a project:
+- `supported-versions.md`
+- `dependency-versions.md`
+- `architecture.md`
+- `setup.md`
+- `api-usage.md`
+- `networking.md`
+- `configuration.md`
+- `template.md`
+- `migration-1.0.0-to-1.1.0.md`
+- `limitations.md`
+- `testing.md`
+- `publishing.md`
 
-1. `setup.md`
-2. `architecture.md`
-3. `module-layout.md`
-4. `api-usage.md`
-5. `template.md`
-6. `publishing.md`
-
-Compatibility details and known boundaries are in `supported-versions.md`, `migration.md`, `troubleshooting.md`, and `limitations.md`.
+The repository is All Rights Reserved. Template scaffold permission is limited to the template modules named in the root `LICENSE`.

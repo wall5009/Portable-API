@@ -1,17 +1,5 @@
 /*
- * MIT License
- *
- * Copyright (c) 2026 PortableMC
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * Copyright (c) 2026 PortableMC. All Rights Reserved.
  */
 package dev.portablemc.api.internal;
 
@@ -19,6 +7,7 @@ import dev.portablemc.api.PlatformInfo;
 import dev.portablemc.api.PortableLifecycleEvents;
 import dev.portablemc.api.PortableLogger;
 import dev.portablemc.api.PortableModContext;
+import dev.portablemc.api.PortablePlatformServices;
 import dev.portablemc.api.command.PortableCommandManager;
 import dev.portablemc.api.config.PortableConfigManager;
 import dev.portablemc.api.content.PortableContentRegistry;
@@ -37,6 +26,7 @@ public final class DefaultPortableModContext implements PortableModContext {
     private final PortableCommandManager commands;
     private final PortableConfigManager config;
     private final PortableNetworking networking;
+    private final PortablePlatformServices platformServices;
 
     /**
      * Creates a context from already-adapted services.
@@ -51,6 +41,24 @@ public final class DefaultPortableModContext implements PortableModContext {
             final PortableConfigManager config,
             final PortableNetworking networking
     ) {
+        this(modId, platform, logger, lifecycle, content, commands, config, networking, PortablePlatformServices.basic(platform));
+    }
+
+    /**
+     * Creates a context from already-adapted services and optional platform
+     * service queries.
+     */
+    public DefaultPortableModContext(
+            final String modId,
+            final PlatformInfo platform,
+            final PortableLogger logger,
+            final PortableLifecycleEvents lifecycle,
+            final PortableContentRegistry content,
+            final PortableCommandManager commands,
+            final PortableConfigManager config,
+            final PortableNetworking networking,
+            final PortablePlatformServices platformServices
+    ) {
         this.modId = Objects.requireNonNull(modId, "modId");
         this.platform = Objects.requireNonNull(platform, "platform");
         this.logger = Objects.requireNonNull(logger, "logger");
@@ -59,6 +67,7 @@ public final class DefaultPortableModContext implements PortableModContext {
         this.commands = Objects.requireNonNull(commands, "commands");
         this.config = Objects.requireNonNull(config, "config");
         this.networking = Objects.requireNonNull(networking, "networking");
+        this.platformServices = Objects.requireNonNull(platformServices, "platformServices");
     }
 
     @Override
@@ -99,5 +108,10 @@ public final class DefaultPortableModContext implements PortableModContext {
     @Override
     public PortableNetworking networking() {
         return networking;
+    }
+
+    @Override
+    public PortablePlatformServices platformServices() {
+        return platformServices;
     }
 }

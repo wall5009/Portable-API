@@ -1,55 +1,39 @@
-# Portable API distribution
+# Distribution
 
-Run the complete release build from the repository root:
+`fullDistributionBuild` creates the release layout under `build/release/portable-api-<version>` and the full archive under `build/distributions`.
 
-```bat
-gradlew.bat clean fullDistributionBuild -PreleaseChannel=release
+## Commands
+
+```powershell
+.\gradlew.bat clean check fullDistributionBuild
+.\gradlew.bat releaseBuild
 ```
 
-Use `alpha`, `beta`, or `release` for `releaseChannel`. The legacy command
-`releaseBuild` is an alias for the same complete task.
+## Output Layout
 
-The output is created in:
+- `github/`: release notes, checksums, and the four API runtime jars.
+- `curseforge/<target>/`: one API runtime jar plus upload metadata per target.
+- `modrinth/<target>/`: one API runtime jar plus upload metadata per target.
+- `maven/repository/`: staged Maven repository for the seven API publications.
+- `developer-artifacts/template-runtime-jars/`: template jars for scaffold validation only.
 
-```text
-build/release/portable-api-<version>/
-build/distributions/portable-api-full-distribution-<version>.zip
-```
+## Player-Facing Files
 
-The release folder is divided by destination:
+Upload only:
 
-- `github/`: four player-facing API JARs and release documents.
-- `curseforge/`: one directory per Minecraft/loader target with its JAR and upload metadata.
-- `modrinth/`: one directory per target with its primary JAR, metadata, sources, and Javadoc.
-- `maven/`: a repository-layout Maven tree and a bundle ZIP.
-- `developer-artifacts/`: template runtime JARs and API companion artifacts; do not publish template JARs as player API downloads.
+- `portable-api-platform-fabric-1201-1.1.0.jar`
+- `portable-api-platform-forge-1201-1.1.0.jar`
+- `portable-api-platform-fabric-1211-1.1.0.jar`
+- `portable-api-platform-neoforge-1211-1.1.0.jar`
 
-## Maven Central signing
+Fabric files require Fabric API. Forge and NeoForge files have no additional Portable API runtime dependency.
 
-Maven Central requires PGP signatures. Provide an ASCII-armored private key and
-its password, then request Central validation:
+## Remote Publishing
 
-```bat
-set SIGNING_KEY=<ASCII-armored-private-key>
-set SIGNING_PASSWORD=<key-password>
-gradlew.bat clean fullDistributionBuild -PreleaseChannel=release -PmavenCentral=true
-```
+Remote Maven publishing requires:
 
-On PowerShell, use `$env:SIGNING_KEY` and `$env:SIGNING_PASSWORD` instead of
-`set`.
+- `MAVEN_PUBLISH_URL`
+- `MAVEN_USERNAME`
+- `MAVEN_PASSWORD`
 
-## Direct remote Maven publishing
-
-The build also exposes `publishApiToRemoteRepository`, which publishes only the
-seven API Maven modules, never the template modules:
-
-```bat
-set MAVEN_PUBLISH_URL=https://your.maven.repository/releases
-set MAVEN_USERNAME=your-username
-set MAVEN_PASSWORD=your-password
-gradlew.bat publishApiToRemoteRepository
-```
-
-Review `build/release/portable-api-<version>/MANUAL-DISTRIBUTION.md` after every
-build. It contains the exact generated filenames and target metadata for that
-version.
+Release workflows require the relevant CurseForge and Modrinth project IDs and tokens. Dry runs perform validation without remote writes.

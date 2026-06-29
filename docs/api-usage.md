@@ -1,18 +1,27 @@
 # API Usage
 
-Implement `PortableMod` in shared code. Register only portable declarations there.
+The shared mod implements `PortableMod`:
 
 ```java
-context.content().registerItem("portable_item", PortableItemSettings.defaults());
-context.config().register(new PortableConfigSpec("my_mod.properties", "enabled=true\n"));
-context.networking().declareChannel("main", NetworkPhase.PLAY, 1, 32767);
+public final class ExampleMod implements PortableMod {
+    @Override
+    public void initialize(PortableModContext context) {
+        context.content().registerItem("example_item", PortableItemSettings.defaults());
+    }
+}
 ```
 
-Use lifecycle callbacks for stable cross-loader events:
+Register a command tree:
 
 ```java
-context.lifecycle().onCommonSetup(() -> context.logger().info("Ready"));
-context.lifecycle().onServerStarting(server -> context.logger().info(server.worldDirectory().toString()));
+PortableCommandNode.Builder root = PortableCommandTree.literal("example");
+root.thenLiteral("status").executes(ctx -> {
+    ctx.reply("Running");
+    return 1;
+});
+context.commands().registerTree(new PortableCommandTree(root.build()));
 ```
 
-Put anything more specific in target modules. Examples include custom block entities, payload codecs, renderer registration, custom commands with complex Brigadier arguments, and loader-specific config screens.
+Use typed config through `PortableConfigManager.registerTyped`. The old raw `PortableConfigSpec` path still works and is deprecated for compatibility.
+
+Use `context.diagnostics().logSummary()` when diagnosing environment setup.

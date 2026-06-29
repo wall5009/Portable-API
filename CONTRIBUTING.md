@@ -1,40 +1,42 @@
 # Contributing
 
-Portable API changes should keep shared-code promises honest. Do not move Minecraft or loader-only types into `api-core`, and do not add a common abstraction when the supported targets have materially different behavior.
+Portable API is an All Rights Reserved repository. Contributions are accepted only for PortableMC-maintained development; submitting changes does not grant redistribution or sublicensing rights.
 
-## Local Checks
+## Requirements
 
-Run Gradle with Java 21:
+- Run Gradle with Java 21.
+- Preserve Java 17 compilation for Minecraft 1.20.1 modules.
+- Keep `api-core` free of Minecraft and loader dependencies.
+- Keep Minecraft-version code in `api-mc-*`.
+- Keep loader-specific code in `platform-*`.
+- Do not publish template jars as Portable API runtime downloads.
+
+## Verification
+
+Before proposing changes, run:
 
 ```powershell
-$env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot'
-$env:Path="$env:JAVA_HOME\bin;$env:Path"
-.\gradlew.bat check validateGeneratedResources
+.\gradlew.bat check
+.\gradlew.bat validateGeneratedResources
+.\gradlew.bat verifyArtifacts
 ```
 
-For target work, compile the affected modules and at least one template module for the same Minecraft version. Before release, run:
+Release work must run:
 
 ```powershell
-.\gradlew.bat releaseBuild
+.\gradlew.bat clean fullDistributionBuild
 ```
 
-## API Rules
+## API Compatibility
 
-- `api-core` is pure Java and must not import `net.minecraft`, Fabric, Forge, or NeoForge packages.
-- `api-mc-*` may import Minecraft classes but must not import loader packages.
-- `platform-*` modules may import only their target loader family.
-- V1 abstractions must fail with actionable errors when an operation is unsupported.
-- Comments should explain lifecycle, compatibility, and non-obvious implementation decisions. Do not add comments that restate a single obvious statement.
+`checkApiCompatibility` compares `api-core` against `config/api/v1.0.0-api.txt`. Public v1.0.0 methods should be retained. Prefer additive APIs, default interface methods, deprecations, and compatibility shims over removals.
 
-## Version Pins
+## License Headers
 
-Dependency pins live in `gradle.properties`. Update them only after checking official Maven metadata and compiling every affected target. Document the reason in the pull request.
+Every Java source file must start with:
 
-## Pull Requests
-
-Open PRs with:
-
-- The target matrix affected.
-- Commands run locally.
-- Any known in-game validation not performed and why.
-- Screenshots or logs only when they clarify a client/server behavior change.
+```java
+/*
+ * Copyright (c) 2026 PortableMC. All Rights Reserved.
+ */
+```

@@ -1,17 +1,5 @@
 /*
- * MIT License
- *
- * Copyright (c) 2026 PortableMC
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * Copyright (c) 2026 PortableMC. All Rights Reserved.
  */
 package dev.portablemc.api.neoforge1211;
 
@@ -22,11 +10,12 @@ import dev.portablemc.api.PlatformInfo;
 import dev.portablemc.api.PortableLifecycleEvents;
 import dev.portablemc.api.PortableLogger;
 import dev.portablemc.api.PortableMod;
+import dev.portablemc.api.PortablePlatformServices;
 import dev.portablemc.api.PortableServerContext;
 import dev.portablemc.api.RuntimeSide;
 import dev.portablemc.api.command.PortableCommand;
-import dev.portablemc.api.command.PortableCommandContext;
 import dev.portablemc.api.command.PortableCommandManager;
+import dev.portablemc.api.command.PortableCommandTree;
 import dev.portablemc.api.config.PortableConfigManager;
 import dev.portablemc.api.content.PortableBlockDefinition;
 import dev.portablemc.api.content.PortableBlockRegistration;
@@ -35,8 +24,10 @@ import dev.portablemc.api.content.PortableCreativeTabEntry;
 import dev.portablemc.api.content.PortableItemDefinition;
 import dev.portablemc.api.content.PortableRegistryHandle;
 import dev.portablemc.api.internal.DefaultPortableModContext;
+import dev.portablemc.api.mc1211.Minecraft1211CommandAdapters;
 import dev.portablemc.api.mc1211.Minecraft1211Adapters;
 import dev.portablemc.api.network.PortableNetworkChannel;
+import dev.portablemc.api.network.PortablePacketRegistration;
 import dev.portablemc.api.network.PortableNetworking;
 import dev.portablemc.api.spi.PortableCommandAdapter;
 import dev.portablemc.api.spi.PortableContentAdapter;
@@ -47,14 +38,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.commands.Commands;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.storage.LevelResource;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.fml.loading.FMLEnvironment;
@@ -62,7 +53,11 @@ import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
@@ -98,6 +93,12 @@ public final class NeoForge1211Bootstrap {
                 Optional.empty(),
                 FMLPaths.CONFIGDIR.get()
         );
+        PortablePlatformServices platformServices = PortablePlatformServices.builder(platform)
+                .modLoaded(id -> ModList.get().isLoaded(id))
+                .modVersion(id -> ModList.get().getModContainerById(id)
+                        .map(container -> container.getModInfo().getVersion().toString()))
+                .developmentEnvironment(!FMLEnvironment.production)
+                .build();
         PortableLifecycleEvents lifecycle = new PortableLifecycleEvents();
         return new DefaultPortableModContext(
                 modId,
@@ -107,7 +108,8 @@ public final class NeoForge1211Bootstrap {
                 new PortableContentRegistry(modId, runtime),
                 new PortableCommandManager(runtime),
                 new PortableConfigManager(platform.configDirectory()),
-                new PortableNetworking(modId, runtime)
+                new PortableNetworking(modId, runtime),
+                platformServices
         );
     }
 
@@ -117,6 +119,8 @@ public final class NeoForge1211Bootstrap {
         private final DeferredRegister<Item> items;
         private final List<PortableCreativeTabEntry> creativeTabEntries = new ArrayList<>();
         private final List<PortableCommand> commands = new ArrayList<>();
+        private final List<PortableCommandTree> commandTrees = new ArrayList<>();
+        private final List<PortablePacketRegistration<?>> packetRegistrations = new ArrayList<>();
         private final java.util.Map<dev.portablemc.api.PortableIdentifier, Supplier<? extends Item>> itemSuppliers =
                 new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -133,8 +137,20 @@ public final class NeoForge1211Bootstrap {
             modEventBus.addListener((FMLClientSetupEvent event) -> context.lifecycle().fireClientSetup());
             modEventBus.addListener(this::onCreativeTab);
             NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
-            NeoForge.EVENT_BUS.addListener((ServerStartingEvent event) -> context.lifecycle().fireServerStarting(
-                    new PortableServerContext(event.getServer().getWorldPath(LevelResource.ROOT))));
+            NeoForge.EVENT_BUS.addListener((ServerStartingEvent event) ->
+                    context.lifecycle().fireServerStarting(serverContext(event.getServer())));
+            NeoForge.EVENT_BUS.addListener((ServerStartedEvent event) ->
+                    context.lifecycle().fireServerStarted(serverContext(event.getServer())));
+            NeoForge.EVENT_BUS.addListener((ServerStoppingEvent event) ->
+                    context.lifecycle().fireServerStopping(serverContext(event.getServer())));
+            NeoForge.EVENT_BUS.addListener((ServerStoppedEvent event) ->
+                    context.lifecycle().fireServerStopped(serverContext(event.getServer())));
+            NeoForge.EVENT_BUS.addListener((ServerTickEvent.Post event) ->
+                    context.lifecycle().fireServerTick(serverContext(event.getServer())));
+        }
+
+        private static PortableServerContext serverContext(final MinecraftServer server) {
+            return new PortableServerContext(server.getWorldPath(LevelResource.ROOT));
         }
 
         @Override
@@ -181,8 +197,19 @@ public final class NeoForge1211Bootstrap {
         }
 
         @Override
+        public void registerTree(final PortableCommandTree tree) {
+            commandTrees.add(tree);
+        }
+
+        @Override
         public void declare(final PortableNetworkChannel channel) {
             System.getLogger(modId).log(System.Logger.Level.DEBUG, "Declared portable network channel " + channel.id());
+        }
+
+        @Override
+        public <T> void registerPacket(final PortablePacketRegistration<T> registration) {
+            packetRegistrations.add(registration);
+            System.getLogger(modId).log(System.Logger.Level.DEBUG, "Registered portable packet " + registration.type().id());
         }
 
         private void onCreativeTab(final BuildCreativeModeTabContentsEvent event) {
@@ -196,13 +223,10 @@ public final class NeoForge1211Bootstrap {
         private void onRegisterCommands(final RegisterCommandsEvent event) {
             CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
             for (PortableCommand command : commands) {
-                dispatcher.register(Commands.literal(command.name())
-                        .requires(source -> source.hasPermission(command.permissionLevel()))
-                        .executes(context -> {
-                            PortableCommandContext portableContext = message ->
-                                    context.getSource().sendSystemMessage(Component.literal(message));
-                            return command.executor().run(portableContext);
-                        }));
+                dispatcher.register(Minecraft1211CommandAdapters.literalCommand(command));
+            }
+            for (PortableCommandTree tree : commandTrees) {
+                dispatcher.register(Minecraft1211CommandAdapters.commandTree(tree));
             }
         }
     }

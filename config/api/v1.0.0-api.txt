@@ -1,0 +1,66 @@
+# Portable API v1.0.0 public core signature.
+# Format: class <fqcn> OR method <fqcn> <name> <arity>
+class dev.portablemc.api.LoaderKind
+class dev.portablemc.api.MinecraftVersion
+class dev.portablemc.api.PlatformInfo
+class dev.portablemc.api.PortableDataGenerationContext
+class dev.portablemc.api.PortableIdentifier
+class dev.portablemc.api.PortableLifecycleEvents
+class dev.portablemc.api.PortableLogger
+class dev.portablemc.api.PortableMod
+class dev.portablemc.api.PortableModContext
+class dev.portablemc.api.PortableServerContext
+class dev.portablemc.api.RuntimeSide
+class dev.portablemc.api.command.PortableCommand
+class dev.portablemc.api.command.PortableCommandContext
+class dev.portablemc.api.command.PortableCommandExecutor
+class dev.portablemc.api.command.PortableCommandManager
+class dev.portablemc.api.config.PortableConfigManager
+class dev.portablemc.api.config.PortableConfigSpec
+class dev.portablemc.api.content.PortableBlockDefinition
+class dev.portablemc.api.content.PortableBlockRegistration
+class dev.portablemc.api.content.PortableBlockSettings
+class dev.portablemc.api.content.PortableContentRegistry
+class dev.portablemc.api.content.PortableCreativeTabEntry
+class dev.portablemc.api.content.PortableCreativeTabKey
+class dev.portablemc.api.content.PortableItemDefinition
+class dev.portablemc.api.content.PortableItemSettings
+class dev.portablemc.api.content.PortableRegistryHandle
+class dev.portablemc.api.network.NetworkPhase
+class dev.portablemc.api.network.PortableNetworkChannel
+class dev.portablemc.api.network.PortableNetworking
+class dev.portablemc.api.spi.PortableCommandAdapter
+class dev.portablemc.api.spi.PortableContentAdapter
+class dev.portablemc.api.spi.PortableNetworkingAdapter
+method dev.portablemc.api.PortableIdentifier of 2
+method dev.portablemc.api.PortableIdentifier parse 2
+method dev.portablemc.api.PortableIdentifier asString 0
+method dev.portablemc.api.PortableLifecycleEvents onCommonSetup 1
+method dev.portablemc.api.PortableLifecycleEvents onClientSetup 1
+method dev.portablemc.api.PortableLifecycleEvents onServerStarting 1
+method dev.portablemc.api.PortableLifecycleEvents onDataGeneration 1
+method dev.portablemc.api.PortableLifecycleEvents fireCommonSetup 0
+method dev.portablemc.api.PortableLifecycleEvents fireClientSetup 0
+method dev.portablemc.api.PortableLifecycleEvents fireServerStarting 1
+method dev.portablemc.api.PortableLifecycleEvents fireDataGeneration 1
+method dev.portablemc.api.PortableMod initialize 1
+method dev.portablemc.api.PortableModContext modId 0
+method dev.portablemc.api.PortableModContext platform 0
+method dev.portablemc.api.PortableModContext logger 0
+method dev.portablemc.api.PortableModContext lifecycle 0
+method dev.portablemc.api.PortableModContext content 0
+method dev.portablemc.api.PortableModContext commands 0
+method dev.portablemc.api.PortableModContext config 0
+method dev.portablemc.api.PortableModContext networking 0
+method dev.portablemc.api.command.PortableCommandManager registerLiteral 3
+method dev.portablemc.api.command.PortableCommandContext reply 1
+method dev.portablemc.api.config.PortableConfigManager register 1
+method dev.portablemc.api.content.PortableContentRegistry registerSimpleBlock 3
+method dev.portablemc.api.content.PortableContentRegistry registerItem 2
+method dev.portablemc.api.content.PortableContentRegistry addToCreativeTab 2
+method dev.portablemc.api.network.PortableNetworking declareChannel 4
+method dev.portablemc.api.spi.PortableCommandAdapter register 1
+method dev.portablemc.api.spi.PortableContentAdapter registerSimpleBlock 2
+method dev.portablemc.api.spi.PortableContentAdapter registerItem 1
+method dev.portablemc.api.spi.PortableContentAdapter addCreativeTabEntry 1
+method dev.portablemc.api.spi.PortableNetworkingAdapter declare 1

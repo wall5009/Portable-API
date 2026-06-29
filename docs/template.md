@@ -1,22 +1,12 @@
-# Template Mod
+# Template
 
-The repository contains exactly one template mod:
+There is exactly one template mod:
 
-- `template-common`
-- `template-fabric-1201`
-- `template-forge-1201`
-- `template-fabric-1211`
-- `template-neoforge-1211`
+- shared code: `template-common`
+- loader entrypoints: `template-fabric-1201`, `template-forge-1201`, `template-fabric-1211`, `template-neoforge-1211`
 
-It demonstrates:
+The template demonstrates one simple block, one simple item, vanilla creative-tab placement, a small command tree, typed config, packet declarations, lifecycle registration, and structured generated resources.
 
-- Shared `PortableMod` implementation.
-- Simple block and item registration.
-- Creative-tab entries.
-- A literal command.
-- A default config file.
-- A declared network channel.
-- Generated resource output.
-- Thin loader entrypoints.
+To copy the scaffold, copy only the template modules named in the root `LICENSE`, then rename package `dev.portablemc.template`, mod id `portable_template`, display name `Portable Template`, artifact names, and metadata placeholders.
 
-To copy it into a new repository, keep the common module and only the loader targets you intend to ship. Rename package names, mod ids, Gradle artifact names, and metadata together.
+The template permission does not apply to Portable API source, binaries, documentation, branding, Maven coordinates, or release artifacts.

@@ -1,17 +1,5 @@
 /*
- * MIT License
- *
- * Copyright (c) 2026 PortableMC
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * Copyright (c) 2026 PortableMC. All Rights Reserved.
  */
 package dev.portablemc.api;
 
@@ -79,4 +67,25 @@ public interface PortableModContext {
      * @return networking service
      */
     PortableNetworking networking();
+
+    /**
+     * Returns optional loader/platform services beyond the stable
+     * {@link PlatformInfo} record. The default preserves v1.0 implementations
+     * by exposing only information already present in {@link #platform()}.
+     *
+     * @return platform services
+     */
+    default PortablePlatformServices platformServices() {
+        return PortablePlatformServices.basic(platform());
+    }
+
+    /**
+     * Returns a low-noise diagnostic helper for the active Portable API
+     * context.
+     *
+     * @return diagnostics
+     */
+    default PortableDiagnostics diagnostics() {
+        return new PortableDiagnostics(this);
+    }
 }

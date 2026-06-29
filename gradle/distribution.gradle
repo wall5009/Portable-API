@@ -121,6 +121,31 @@ def writeUtf8 = { File file, String text ->
     file.setText(text, 'UTF-8')
 }
 
+def changelogSection = { String version ->
+    File changelog = rootProject.file('CHANGELOG.md')
+    if (!changelog.isFile()) {
+        throw new GradleException('CHANGELOG.md is required to build release notes.')
+    }
+    def lines = changelog.readLines('UTF-8')
+    def headerPattern = ~/^##\s+${java.util.regex.Pattern.quote(version)}(\s+-\s+.+)?\s*$/
+    int start = lines.findIndexOf { line -> line ==~ headerPattern }
+    if (start < 0) {
+        throw new GradleException("CHANGELOG.md does not contain a release section for ${version}.")
+    }
+    int end = lines.findIndexOf(start + 1) { line -> line.startsWith('## ') }
+    if (end < 0) {
+        end = lines.size()
+    }
+    def body = lines.subList(start + 1, end).join(System.lineSeparator()).trim()
+    if (body.isEmpty()) {
+        throw new GradleException("CHANGELOG.md section for ${version} is empty.")
+    }
+    if (body.toLowerCase(Locale.ROOT).contains('replace this section')) {
+        throw new GradleException("CHANGELOG.md section for ${version} still contains a placeholder.")
+    }
+    body
+}
+
 tasks.register('validateDistributionConfiguration') {
     group = 'release'
     description = 'Validates release-channel and optional Maven Central signing settings.'
@@ -150,11 +175,32 @@ tasks.register('buildAllDistributionJars') {
     dependsOn releaseModules.collect { module -> ":${module}:build" }
 }
 
+def cleanStagedMavenRepository = tasks.register('cleanStagedMavenRepository', Delete) {
+    group = 'publishing'
+    description = 'Removes stale staged Maven artifacts before publishing the current release.'
+    delete stagedMavenDirectory
+}
+
 tasks.register('stageApiMavenRepository') {
     group = 'publishing'
     description = 'Stages all API Maven publications in Maven repository layout.'
     dependsOn apiMavenModules.collect { module ->
         ":${module}:publishAllPublicationsToStagingRepository"
+    }
+}
+
+gradle.projectsEvaluated {
+    apiMavenModules.each { module ->
+        def apiProject = project(":${module}")
+        [
+            'publishMavenJavaPublicationToStagingRepository',
+            'publishAllPublicationsToStagingRepository'
+        ].each { taskName ->
+            apiProject.tasks.named(taskName) {
+                dependsOn cleanStagedMavenRepository
+                mustRunAfter cleanStagedMavenRepository
+            }
+        }
     }
 }
 
@@ -178,7 +224,8 @@ tasks.register('publishApiToRemoteRepository') {
 tasks.register('verifyDistributionArtifacts') {
     group = 'verification'
     description = 'Verifies every final runtime JAR and staged Maven publication.'
-    dependsOn 'validateDistributionConfiguration', 'buildAllDistributionJars', 'stageApiMavenRepository'
+    dependsOn 'validateDistributionConfiguration', 'buildAllDistributionJars', 'verifyArtifacts',
+            'stageApiMavenRepository'
 
     doLast {
         apiTargets.each { target ->
@@ -247,9 +294,22 @@ tasks.register('verifyDistributionArtifacts') {
 
         apiMavenModules.each { module ->
             def artifactId = "${rootProject.name}-${module}"
-            File versionDirectory = new File(
+            File artifactDirectory = new File(
                     mavenRoot,
-                    "${rootProject.group.toString().replace('.', '/')}/${artifactId}/${releaseVersion}"
+                    "${rootProject.group.toString().replace('.', '/')}/${artifactId}"
+            )
+            def staleVersions = artifactDirectory.isDirectory()
+                    ? artifactDirectory.listFiles({ File file -> file.isDirectory() && file.name != releaseVersion } as FileFilter)
+                    : [] as File[]
+            if (staleVersions.length > 0) {
+                throw new GradleException(
+                        "Staged Maven repository contains stale versions for ${module}: "
+                                + staleVersions.collect { it.name }.join(', ')
+                )
+            }
+            File versionDirectory = new File(
+                    artifactDirectory,
+                    releaseVersion
             )
             File pomFile = new File(versionDirectory, "${artifactId}-${releaseVersion}.pom")
             File publishedJar = new File(versionDirectory, "${artifactId}-${releaseVersion}.jar")
@@ -257,6 +317,16 @@ tasks.register('verifyDistributionArtifacts') {
                 throw new GradleException(
                         "Incomplete Maven publication for ${module}; expected ${pomFile.name} and ${publishedJar.name}."
                 )
+            }
+            def pomText = pomFile.getText('UTF-8')
+            if (pomText.contains('MIT') || pomText.contains('opensource.org')) {
+                throw new GradleException("${pomFile.name} contains stale MIT license metadata.")
+            }
+            if (!pomText.contains('<name>All Rights Reserved</name>')) {
+                throw new GradleException("${pomFile.name} does not publish All Rights Reserved license metadata.")
+            }
+            if (pomText.contains('${')) {
+                throw new GradleException("${pomFile.name} contains unresolved placeholders.")
             }
 
             if (centralRequested.get()) {
@@ -293,6 +363,7 @@ tasks.register('assembleDistributionLayout') {
     description = 'Creates service-specific GitHub, CurseForge, Modrinth, Maven, and developer release folders.'
     dependsOn 'check', 'validateGeneratedResources', 'verifyDistributionArtifacts', mavenRepositoryBundle
     outputs.dir releaseDirectory
+    outputs.upToDateWhen { false }
     notCompatibleWithConfigurationCache(
             'The release layout performs dynamic cross-project artifact inspection, checksumming, and filesystem assembly.'
     )
@@ -381,11 +452,12 @@ tasks.register('assembleDistributionLayout') {
             "| ${target.minecraft} | ${target.loader} | `${runtimeJar(target.module).get().asFile.name}` | Java ${target.javaVersion} |"
         }.join(System.lineSeparator())
 
+        def releaseChanges = changelogSection(releaseVersion)
         def releaseNotes = """# Portable API ${releaseVersion}
 
 ## Changes
 
-- Replace this section with the changes made in this release.
+${releaseChanges}
 
 ## Compatibility
 
@@ -398,6 +470,9 @@ ${compatibilityRows}
 Install exactly one Portable API JAR matching the modpack's Minecraft version and loader. Fabric installations also require Fabric API.
 """
         writeUtf8(new File(root, 'RELEASE-NOTES.md'), releaseNotes)
+        if (releaseNotes.toLowerCase(Locale.ROOT).contains('replace this section')) {
+            throw new GradleException('Generated release notes contain a placeholder.')
+        }
         copyFile(new File(root, 'RELEASE-NOTES.md'), githubDirectory)
 
         def coordinates = apiMavenModules.collect { module ->
@@ -415,7 +490,7 @@ For ordinary mod development, use the platform artifact matching the target load
 
         def manualGuide = """# Manual distribution checklist for Portable API ${releaseVersion}
 
-1. Edit `RELEASE-NOTES.md` before uploading anything.
+1. Review the generated `RELEASE-NOTES.md`; it is built from `CHANGELOG.md` and should not require placeholder edits.
 2. GitHub: create tag `v${releaseVersion}` and upload every JAR directly inside `github/`, plus `RELEASE-NOTES.md`, `SHA256SUMS.txt`, and `SHA512SUMS.txt`.
 3. CurseForge: create one Portable API project. Upload each JAR from `curseforge/<target>/` as a separate file/version, using the adjacent `upload-metadata.json` values. Fabric files require Fabric API; Forge and NeoForge files have no external mod dependency.
 4. Modrinth: use one Portable API project. Create four separate versions, one per `modrinth/<target>/` directory, using the adjacent metadata. The runtime JAR is the primary file. Sources and Javadoc may be uploaded as optional additional files.

@@ -1,3 +1,5 @@
+import groovy.json.JsonOutput
+
 dependencies {
     api project(':api-core')
 }
@@ -10,24 +12,65 @@ tasks.register('generatePortableTemplateResources') {
     outputs.dir(generatedTemplateResources)
     doLast {
         def root = generatedTemplateResources.get().asFile
+        def json = { value -> JsonOutput.prettyPrint(JsonOutput.toJson(value)) + System.lineSeparator() }
         def files = [
-                'assets/portable_template/lang/en_us.json':
-                        '{\n  "block.portable_template.portable_block": "Portable Block",\n  "item.portable_template.portable_item": "Portable Item"\n}\n',
-                'assets/portable_template/models/block/portable_block.json':
-                        '{\n  "parent": "minecraft:block/cube_all",\n  "textures": { "all": "minecraft:block/stone" }\n}\n',
-                'assets/portable_template/models/item/portable_block.json':
-                        '{\n  "parent": "portable_template:block/portable_block"\n}\n',
-                'assets/portable_template/models/item/portable_item.json':
-                        '{\n  "parent": "minecraft:item/generated",\n  "textures": { "layer0": "minecraft:item/iron_ingot" }\n}\n',
-                'assets/portable_template/blockstates/portable_block.json':
-                        '{\n  "variants": { "": { "model": "portable_template:block/portable_block" } }\n}\n',
-                'data/portable_template/tags/blocks/mineable/pickaxe.json':
-                        '{\n  "replace": false,\n  "values": [ "portable_template:portable_block" ]\n}\n'
+                'pack.mcmeta': json([
+                        pack: [
+                                pack_format: 15,
+                                description: 'Portable Template generated resources'
+                        ]
+                ]),
+                'assets/portable_template/lang/en_us.json': json([
+                        'block.portable_template.portable_block': 'Portable Block',
+                        'item.portable_template.portable_item': 'Portable Item',
+                        'itemGroup.portable_template.main': 'Portable Template'
+                ]),
+                'assets/portable_template/models/block/portable_block.json': json([
+                        parent: 'minecraft:block/cube_all',
+                        textures: [all: 'minecraft:block/stone']
+                ]),
+                'assets/portable_template/models/item/portable_block.json': json([
+                        parent: 'portable_template:block/portable_block'
+                ]),
+                'assets/portable_template/models/item/portable_item.json': json([
+                        parent: 'minecraft:item/generated',
+                        textures: [layer0: 'minecraft:item/iron_ingot']
+                ]),
+                'assets/portable_template/blockstates/portable_block.json': json([
+                        variants: ['': [model: 'portable_template:block/portable_block']]
+                ]),
+                'data/portable_template/tags/blocks/mineable/pickaxe.json': json([
+                        replace: false,
+                        values: ['portable_template:portable_block']
+                ]),
+                'data/portable_template/tags/items/portable_items.json': json([
+                        replace: false,
+                        values: ['portable_template:portable_item']
+                ]),
+                'data/portable_template/recipes/portable_item.json': json([
+                        type: 'minecraft:crafting_shapeless',
+                        ingredients: [[item: 'minecraft:iron_ingot']],
+                        result: [item: 'portable_template:portable_item', count: 1]
+                ]),
+                'data/portable_template/recipes/portable_block.json': json([
+                        type: 'minecraft:crafting_shaped',
+                        pattern: ['II', 'II'],
+                        key: [I: [item: 'minecraft:iron_ingot']],
+                        result: [item: 'portable_template:portable_block', count: 1]
+                ]),
+                'data/portable_template/loot_tables/blocks/portable_block.json': json([
+                        type: 'minecraft:block',
+                        pools: [[
+                                rolls: 1,
+                                entries: [[type: 'minecraft:item', name: 'portable_template:portable_block']],
+                                conditions: [[condition: 'minecraft:survives_explosion']]
+                        ]]
+                ])
         ]
         files.each { path, content ->
             def out = new File(root, path)
             out.parentFile.mkdirs()
-            out.text = content
+            out.setText(content, 'UTF-8')
         }
     }
 }

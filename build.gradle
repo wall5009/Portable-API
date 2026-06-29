@@ -52,6 +52,10 @@ subprojects {
         options.addBooleanOption('Xdoclint:all,-missing', true)
     }
 
+    tasks.named('javadocJar') {
+        exclude 'legal/jquery.md', 'legal/jqueryUI.md'
+    }
+
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
         testLogging {
@@ -109,7 +113,7 @@ subprojects {
         inputs.files(licenseSourceFiles)
         doLast {
             def missing = inputs.files.files.findAll { file ->
-                file.isFile() && !file.getText('UTF-8').startsWith('/*\n * MIT License\n')
+                file.isFile() && !file.getText('UTF-8').startsWith('/*\n * Copyright (c) 2026 PortableMC. All Rights Reserved.\n */\n')
             }
             if (!missing.empty) {
                 def relativeFiles = missing.collect { file ->
@@ -165,7 +169,7 @@ subprojects {
                     licenses {
                         license {
                             name = providers.gradleProperty('project_license')
-                            url = 'https://opensource.org/license/mit/'
+                            url = providers.gradleProperty('project_url')
                         }
                     }
                     developers {
@@ -228,47 +232,214 @@ tasks.register('check') {
     group = 'verification'
     description = 'Runs verification for every module.'
     dependsOn subprojects.collect { it.tasks.named('check') }
+    dependsOn 'checkApiCompatibility'
 }
 
 tasks.register('validateGeneratedResources') {
     group = 'verification'
     description = 'Ensures generated template resource files exist after the template resource task runs.'
     dependsOn ':template-common:generatePortableTemplateResources'
+    def expectedResourcePaths = [
+            'template-common/build/generated/portable-template/pack.mcmeta',
+            'template-common/build/generated/portable-template/assets/portable_template/lang/en_us.json',
+            'template-common/build/generated/portable-template/assets/portable_template/blockstates/portable_block.json',
+            'template-common/build/generated/portable-template/assets/portable_template/models/block/portable_block.json',
+            'template-common/build/generated/portable-template/assets/portable_template/models/item/portable_block.json',
+            'template-common/build/generated/portable-template/assets/portable_template/models/item/portable_item.json',
+            'template-common/build/generated/portable-template/data/portable_template/tags/blocks/mineable/pickaxe.json',
+            'template-common/build/generated/portable-template/data/portable_template/tags/items/portable_items.json',
+            'template-common/build/generated/portable-template/data/portable_template/recipes/portable_block.json',
+            'template-common/build/generated/portable-template/data/portable_template/recipes/portable_item.json',
+            'template-common/build/generated/portable-template/data/portable_template/loot_tables/blocks/portable_block.json'
+    ]
+    def expectedResources = expectedResourcePaths.collect { path -> layout.projectDirectory.file(path).asFile }
+    inputs.files(expectedResources)
     doLast {
-        def expected = [
-                file('template-common/build/generated/portable-template/assets/portable_template/lang/en_us.json'),
-                file('template-common/build/generated/portable-template/assets/portable_template/models/item/portable_block.json'),
-                file('template-common/build/generated/portable-template/data/portable_template/tags/blocks/mineable/pickaxe.json')
-        ]
+        def expected = expectedResources
         def missing = expected.findAll { !it.isFile() }
         if (!missing.empty) {
-            throw new GradleException("Generated resource validation failed. Missing: ${missing.collect { relativePath(it) }.join(', ')}")
+            throw new GradleException("Generated resource validation failed. Missing: ${missing.collect { it.path }.join(', ')}")
+        }
+        expected.each { generated ->
+            if (generated.path.contains('..')) {
+                throw new GradleException("Generated resource path escapes its namespace: ${generated}")
+            }
+            if (!generated.getText('UTF-8').trim().startsWith('{')) {
+                throw new GradleException("Generated resource is not a JSON object: ${generated}")
+            }
+            new groovy.json.JsonSlurper().parse(generated)
+        }
+    }
+}
+
+tasks.register('checkApiCompatibility') {
+    group = 'verification'
+    description = 'Checks that api-core retains the checked-in v1.0.0 public API signature.'
+    dependsOn ':api-core:classes'
+    def signatureFile = layout.projectDirectory.file('config/api/v1.0.0-api.txt')
+    def apiCoreClasses = project(':api-core').sourceSets.main.output.classesDirs
+    inputs.file(signatureFile)
+    inputs.files(apiCoreClasses)
+    doLast {
+        def classpathUrls = apiCoreClasses.files
+                .findAll { it.exists() }
+                .collect { it.toURI().toURL() } as URL[]
+        def loader = new URLClassLoader(classpathUrls, (ClassLoader) null)
+        def missing = []
+        signatureFile.asFile.readLines('UTF-8').each { line ->
+            def trimmed = line.trim()
+            if (!trimmed.isEmpty() && !trimmed.startsWith('#')) {
+                def parts = trimmed.split(/\s+/)
+                if (parts[0] == 'class') {
+                    try {
+                        Class.forName(parts[1], false, loader)
+                    } catch (ClassNotFoundException ignored) {
+                        missing << "Missing class ${parts[1]}"
+                    }
+                } else if (parts[0] == 'method') {
+                    try {
+                        def type = Class.forName(parts[1], false, loader)
+                        def name = parts[2]
+                        def arity = parts[3] as int
+                        if (!type.methods.any { it.name == name && it.parameterCount == arity }) {
+                            missing << "Missing method ${parts[1]}#${name}/${arity}"
+                        }
+                    } catch (ClassNotFoundException ignored) {
+                        missing << "Missing class for method ${parts[1]}"
+                    }
+                } else {
+                    throw new GradleException("Unknown API signature directive: ${line}")
+                }
+            }
+        }
+        if (!missing.empty) {
+            throw new GradleException("API compatibility check failed:\n - ${missing.join('\n - ')}")
         }
     }
 }
 
 tasks.register('verifyArtifacts') {
     group = 'verification'
-    description = 'Checks that every exact final runtime JAR is produced.'
+    description = 'Inspects every final runtime JAR for metadata, classes, resources, license text, and target Java level.'
     def required = [
-            'platform-fabric-1201',
-            'platform-forge-1201',
-            'platform-fabric-1211',
-            'platform-neoforge-1211',
-            'template-fabric-1201',
-            'template-forge-1201',
-            'template-fabric-1211',
-            'template-neoforge-1211'
+            [module: 'platform-fabric-1201', metadata: 'fabric.mod.json', javaMajor: 61, api: true],
+            [module: 'platform-forge-1201', metadata: 'META-INF/mods.toml', javaMajor: 61, api: true],
+            [module: 'platform-fabric-1211', metadata: 'fabric.mod.json', javaMajor: 65, api: true],
+            [module: 'platform-neoforge-1211', metadata: 'META-INF/neoforge.mods.toml', javaMajor: 65, api: true],
+            [module: 'template-fabric-1201', metadata: 'fabric.mod.json', javaMajor: 61, template: true],
+            [module: 'template-forge-1201', metadata: 'META-INF/mods.toml', javaMajor: 61, template: true],
+            [module: 'template-fabric-1211', metadata: 'fabric.mod.json', javaMajor: 65, template: true],
+            [module: 'template-neoforge-1211', metadata: 'META-INF/neoforge.mods.toml', javaMajor: 65, template: true]
     ]
-    dependsOn required.collect { module -> ":${module}:build" }
+    required.each { target ->
+        target.jarFile = project(":${target.module}").layout.buildDirectory
+                .file("libs/${rootProject.name}-${target.module}-${project.version}.jar")
+                .get()
+                .asFile
+    }
+    dependsOn required.collect { target -> ":${target.module}:build" }
     doLast {
-        required.each { module ->
-            def expected = project(":${module}").layout.buildDirectory
-                    .file("libs/${rootProject.name}-${module}-${project.version}.jar")
-                    .get()
-                    .asFile
+        def textResource = { String name ->
+            name.endsWith('.json') || name.endsWith('.toml') || name.endsWith('.mcmeta') || name.endsWith('.MF')
+        }
+        def classMajor = { java.util.zip.ZipFile archive, java.util.zip.ZipEntry entry ->
+            archive.getInputStream(entry).withCloseable { input ->
+                byte[] header = new byte[8]
+                if (input.read(header) != header.length) {
+                    throw new GradleException("Unable to read class header for ${entry.name}")
+                }
+                return ((header[6] & 0xFF) << 8) + (header[7] & 0xFF)
+            }
+        }
+        required.each { target ->
+            def expected = target.jarFile
             if (!expected.isFile() || expected.length() == 0L) {
-                throw new GradleException("Final runtime JAR was not produced for ${module}: ${expected}")
+                throw new GradleException("Final runtime JAR was not produced for ${target.module}: ${expected}")
+            }
+
+            new java.util.zip.ZipFile(expected).withCloseable { archive ->
+                def entries = archive.entries().toList()
+                def entryNames = entries.collect { it.name }
+                def duplicateEntries = entryNames.groupBy { it }.findAll { name, names -> names.size() > 1 }.keySet()
+                if (!duplicateEntries.empty) {
+                    throw new GradleException("${expected.name} contains duplicate entries: ${duplicateEntries.join(', ')}")
+                }
+                if (archive.getEntry(target.metadata) == null) {
+                    throw new GradleException("${expected.name} is missing ${target.metadata}")
+                }
+                def metadataText = archive.getInputStream(archive.getEntry(target.metadata)).getText('UTF-8')
+                if (metadataText.contains('${')) {
+                    throw new GradleException("${expected.name} contains unresolved placeholders in ${target.metadata}")
+                }
+                if (!metadataText.contains('All Rights Reserved')) {
+                    throw new GradleException("${expected.name} metadata does not declare All Rights Reserved")
+                }
+                if (metadataText.contains('MIT') || metadataText.contains('opensource.org')) {
+                    throw new GradleException("${expected.name} metadata still contains MIT license text")
+                }
+
+                if (target.api && archive.getEntry('dev/portablemc/api/PortableMod.class') == null) {
+                    throw new GradleException("${expected.name} is missing Portable API runtime classes")
+                }
+                if (target.api && entryNames.any { it.startsWith('dev/portablemc/template/') }) {
+                    throw new GradleException("${expected.name} includes template classes in an API runtime artifact")
+                }
+                if (target.template && archive.getEntry('dev/portablemc/template/PortableTemplateMod.class') == null) {
+                    throw new GradleException("${expected.name} is missing the template common class")
+                }
+                if (target.template) {
+                    [
+                            'assets/portable_template/lang/en_us.json',
+                            'assets/portable_template/blockstates/portable_block.json',
+                            'assets/portable_template/models/block/portable_block.json',
+                            'assets/portable_template/models/item/portable_block.json',
+                            'assets/portable_template/models/item/portable_item.json',
+                            'data/portable_template/recipes/portable_block.json',
+                            'data/portable_template/recipes/portable_item.json',
+                            'data/portable_template/loot_tables/blocks/portable_block.json'
+                    ].each { resource ->
+                        if (archive.getEntry(resource) == null) {
+                            throw new GradleException("${expected.name} is missing template resource ${resource}")
+                        }
+                    }
+                }
+
+                def forbiddenPackages = []
+                if (target.module.contains('fabric')) {
+                    forbiddenPackages.addAll(['net/minecraftforge/', 'net/neoforged/'])
+                } else if (target.module.contains('neoforge')) {
+                    forbiddenPackages.addAll(['net/fabricmc/', 'net/minecraftforge/'])
+                } else if (target.module.contains('forge')) {
+                    forbiddenPackages.addAll(['net/fabricmc/', 'net/neoforged/'])
+                }
+                forbiddenPackages.each { forbidden ->
+                    if (entryNames.any { it.startsWith(forbidden) }) {
+                        throw new GradleException("${expected.name} contains incompatible loader package ${forbidden}")
+                    }
+                }
+
+                entries.findAll { !it.directory && it.name.endsWith('.class') }.each { entry ->
+                    def major = classMajor(archive, entry)
+                    if (major > target.javaMajor) {
+                        throw new GradleException(
+                                "${expected.name} contains ${entry.name} compiled for class-file major ${major}; "
+                                        + "maximum for this target is ${target.javaMajor}."
+                        )
+                    }
+                }
+
+                entries.findAll { !it.directory && textResource(it.name) }.each { entry ->
+                    def text = archive.getInputStream(entry).getText('UTF-8')
+                    if (text.contains('${')) {
+                        throw new GradleException("${expected.name} contains unresolved placeholder in ${entry.name}")
+                    }
+                    if (text.contains('C:\\') || text.contains('/Users/') || text.contains('/home/')) {
+                        throw new GradleException("${expected.name} contains an absolute local path in ${entry.name}")
+                    }
+                    if (text.contains('Permission is hereby granted')) {
+                        throw new GradleException("${expected.name} contains stale MIT permission text in ${entry.name}")
+                    }
+                }
             }
         }
     }
