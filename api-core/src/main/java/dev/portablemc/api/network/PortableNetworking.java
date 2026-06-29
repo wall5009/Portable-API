@@ -132,6 +132,28 @@ public final class PortableNetworking {
     }
 
     /**
+     * Sends a server-to-client packet to one portable packet sender.
+     *
+     * <p>This is equivalent to calling {@link PortablePacketSender#send(PortablePacketType, Object)}
+     * and is provided for call sites that keep all networking operations on the
+     * networking service.</p>
+     *
+     * @param sender target player sender
+     * @param type server-to-client packet type
+     * @param packet packet value
+     * @param <T> packet value type
+     */
+    public <T> void sendToPlayer(
+            final PortablePacketSender sender,
+            final PortablePacketType<T> type,
+            final T packet
+    ) {
+        Objects.requireNonNull(sender, "sender");
+        requireDirection(type, PacketDirection.SERVER_TO_CLIENT);
+        sender.send(type, packet);
+    }
+
+    /**
      * Encodes a packet using core bounds and protocol metadata.
      *
      * @param type packet type

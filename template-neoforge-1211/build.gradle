@@ -10,9 +10,20 @@ neoForge {
             client()
             gameDirectory = project.file('runs/template-neoforge-1211-client')
         }
+        clientSmoke {
+            client()
+            gameDirectory = project.file('runs/template-neoforge-1211-client-smoke')
+            systemProperty 'portable.api.headlessClientSmoke', 'true'
+        }
         server {
             server()
             gameDirectory = project.file('runs/template-neoforge-1211-server')
+        }
+        serverSmoke {
+            server()
+            gameDirectory = project.file('runs/template-neoforge-1211-server-smoke')
+            systemProperty 'portable.api.dedicatedServerSmoke', 'true'
+            programArgument '--nogui'
         }
         data {
             data()
@@ -77,4 +88,40 @@ tasks.named('processResources') {
 tasks.named('jar') {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from project(':template-common').sourceSets.main.output
+}
+
+tasks.named('runServerSmoke') {
+    doFirst {
+        def runDirectory = file('runs/template-neoforge-1211-server-smoke')
+        runDirectory.mkdirs()
+        new File(runDirectory, 'eula.txt').setText('eula=true\n', 'UTF-8')
+    }
+}
+
+tasks.named('runClientSmoke') {
+    ignoreExitValue = true
+    def markerFile = file('runs/template-neoforge-1211-client-smoke/config/portable_template-client-smoke.ok')
+    doFirst {
+        delete markerFile
+    }
+    doLast {
+        if (!markerFile.isFile()) {
+            throw new GradleException("NeoForge client smoke did not create ${markerFile}")
+        }
+        if (markerFile.getText('UTF-8').trim() != 'completed') {
+            throw new GradleException("NeoForge client smoke marker has unexpected content in ${markerFile}")
+        }
+    }
+}
+
+tasks.named('runGameTestServer') {
+    doFirst {
+        def runDirectory = file('runs/template-neoforge-1211-gametest')
+        def structureDirectory = new File(runDirectory, 'gameteststructures')
+        structureDirectory.mkdirs()
+        copy {
+            from 'src/main/resources/data/portable_template/gametest/structure/empty.snbt'
+            into structureDirectory
+        }
+    }
 }

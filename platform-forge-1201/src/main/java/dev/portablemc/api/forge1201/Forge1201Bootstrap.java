@@ -26,19 +26,32 @@ import dev.portablemc.api.content.PortableRegistryHandle;
 import dev.portablemc.api.internal.DefaultPortableModContext;
 import dev.portablemc.api.mc1201.Minecraft1201CommandAdapters;
 import dev.portablemc.api.mc1201.Minecraft1201Adapters;
+import dev.portablemc.api.network.PacketDirection;
+import dev.portablemc.api.network.PortableEncodedPacket;
 import dev.portablemc.api.network.PortableNetworkChannel;
+import dev.portablemc.api.network.PortablePacketBuffer;
+import dev.portablemc.api.network.PortablePacketContext;
+import dev.portablemc.api.network.PortablePacketException;
 import dev.portablemc.api.network.PortablePacketRegistration;
+import dev.portablemc.api.network.PortablePacketSender;
+import dev.portablemc.api.network.PortablePacketType;
+import dev.portablemc.api.network.PortablePacketWireFormat;
 import dev.portablemc.api.network.PortableNetworking;
 import dev.portablemc.api.spi.PortableCommandAdapter;
 import dev.portablemc.api.spi.PortableContentAdapter;
 import dev.portablemc.api.spi.PortableNetworkingAdapter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.storage.LevelResource;
@@ -57,6 +70,11 @@ import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.loading.FMLEnvironment;
 import net.minecraftforge.fml.loading.FMLPaths;
+import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.network.NetworkEvent;
+import net.minecraftforge.network.NetworkRegistry;
+import net.minecraftforge.network.PacketDistributor;
+import net.minecraftforge.network.simple.SimpleChannel;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.registries.RegistryObject;
@@ -117,10 +135,12 @@ public final class Forge1201Bootstrap {
         private final String modId;
         private final DeferredRegister<Block> blocks;
         private final DeferredRegister<Item> items;
+        private final SimpleChannel networkChannel;
         private final List<PortableCreativeTabEntry> creativeTabEntries = new ArrayList<>();
         private final List<PortableCommand> commands = new ArrayList<>();
         private final List<PortableCommandTree> commandTrees = new ArrayList<>();
         private final List<PortablePacketRegistration<?>> packetRegistrations = new ArrayList<>();
+        private final Map<RegistrationKey, PortablePacketRegistration<?>> registrations = new ConcurrentHashMap<>();
         private final java.util.Map<dev.portablemc.api.PortableIdentifier, Supplier<? extends Item>> itemSuppliers =
                 new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -128,6 +148,17 @@ public final class Forge1201Bootstrap {
             this.modId = Objects.requireNonNull(modId, "modId");
             this.blocks = DeferredRegister.create(ForgeRegistries.BLOCKS, modId);
             this.items = DeferredRegister.create(ForgeRegistries.ITEMS, modId);
+            this.networkChannel = NetworkRegistry.newSimpleChannel(
+                    Minecraft1201Adapters.resourceLocation(dev.portablemc.api.PortableIdentifier.of(modId, "portable")),
+                    () -> "1.1.0",
+                    ignored -> true,
+                    ignored -> true
+            );
+            this.networkChannel.messageBuilder(ForgeWirePacket.class, 0)
+                    .encoder(ForgeWirePacket::encode)
+                    .decoder(ForgeWirePacket::decode)
+                    .consumerMainThread((packet, context) -> handleWirePacket(packet, context.get()))
+                    .add();
             this.blocks.register(modEventBus);
             this.items.register(modEventBus);
         }
@@ -137,6 +168,11 @@ public final class Forge1201Bootstrap {
             modEventBus.addListener((FMLClientSetupEvent event) -> context.lifecycle().fireClientSetup());
             modEventBus.addListener(this::onCreativeTab);
             MinecraftForge.EVENT_BUS.addListener(this::onRegisterCommands);
+            MinecraftForge.EVENT_BUS.addListener((TickEvent.ClientTickEvent event) -> {
+                if (event.phase == TickEvent.Phase.END) {
+                    context.lifecycle().fireClientTick();
+                }
+            });
             MinecraftForge.EVENT_BUS.addListener((ServerStartingEvent event) ->
                     context.lifecycle().fireServerStarting(serverContext(event.getServer())));
             MinecraftForge.EVENT_BUS.addListener((ServerStartedEvent event) ->
@@ -209,7 +245,58 @@ public final class Forge1201Bootstrap {
         @Override
         public <T> void registerPacket(final PortablePacketRegistration<T> registration) {
             packetRegistrations.add(registration);
+            registrations.put(new RegistrationKey(registration.type().id(), registration.type().direction()), registration);
             System.getLogger(modId).log(System.Logger.Level.DEBUG, "Registered portable packet " + registration.type().id());
+        }
+
+        @Override
+        public void sendToServer(final PortableEncodedPacket packet) {
+            if (packet.direction() != PacketDirection.CLIENT_TO_SERVER) {
+                throw new IllegalArgumentException("Packet " + packet.id() + " is not client-to-server");
+            }
+            networkChannel.sendToServer(new ForgeWirePacket(PortablePacketWireFormat.encode(packet)));
+        }
+
+        <T> void sendToPlayer(final ServerPlayer player, final PortablePacketType<T> type, final T packet) {
+            if (type.direction() != PacketDirection.SERVER_TO_CLIENT) {
+                throw new IllegalArgumentException("Packet " + type.id() + " is not server-to-client");
+            }
+            PortableEncodedPacket encoded = new PortableEncodedPacket(
+                    type.id(),
+                    type.phase(),
+                    type.direction(),
+                    type.protocolVersion(),
+                    PortablePacketBuffer.encode(type, packet)
+            );
+            networkChannel.send(
+                    PacketDistributor.PLAYER.with(() -> player),
+                    new ForgeWirePacket(PortablePacketWireFormat.encode(encoded))
+            );
+        }
+
+        private void handleWirePacket(final ForgeWirePacket packet, final NetworkEvent.Context context) {
+            try {
+                PortablePacketWireFormat.Header header = PortablePacketWireFormat.inspect(packet.wireBytes());
+                PacketDirection expectedDirection = context.getDirection() == NetworkDirection.PLAY_TO_SERVER
+                        ? PacketDirection.CLIENT_TO_SERVER : PacketDirection.SERVER_TO_CLIENT;
+                if (header.direction() != expectedDirection) {
+                    throw new PortablePacketException("Packet direction " + header.direction()
+                            + " does not match Forge reception direction " + context.getDirection());
+                }
+                PortablePacketRegistration<?> registration = registrations.get(new RegistrationKey(header.id(), header.direction()));
+                if (registration == null) {
+                    throw new PortablePacketException("No portable packet registration for " + header.direction() + " " + header.id());
+                }
+                PortableEncodedPacket encoded = PortablePacketWireFormat.decode(registration, packet.wireBytes());
+                Optional<PortablePacketSender> sender = Optional.ofNullable(context.getSender()).map(ForgePacketSender::new);
+                registration.dispatch(encoded, new PortablePacketContext(
+                        header.direction(),
+                        sender,
+                        work -> context.enqueueWork(work)
+                ));
+            } catch (PortablePacketException exception) {
+                System.getLogger(modId).log(System.Logger.Level.WARNING, "Rejected malformed portable packet", exception);
+            }
         }
 
         private void onCreativeTab(final BuildCreativeModeTabContentsEvent event) {
@@ -227,6 +314,60 @@ public final class Forge1201Bootstrap {
             }
             for (PortableCommandTree tree : commandTrees) {
                 dispatcher.register(Minecraft1201CommandAdapters.commandTree(tree));
+            }
+        }
+
+        private final class ForgePacketSender implements PortablePacketSender {
+            private final ServerPlayer player;
+
+            private ForgePacketSender(final ServerPlayer player) {
+                this.player = Objects.requireNonNull(player, "player");
+            }
+
+            @Override
+            public Optional<UUID> playerId() {
+                return Optional.of(player.getUUID());
+            }
+
+            @Override
+            public Optional<String> displayName() {
+                return Optional.of(player.getDisplayName().getString());
+            }
+
+            @Override
+            public <T> void send(final PortablePacketType<T> type, final T packet) {
+                sendToPlayer(player, type, packet);
+            }
+        }
+
+        private record RegistrationKey(dev.portablemc.api.PortableIdentifier id, PacketDirection direction) {
+            private RegistrationKey {
+                Objects.requireNonNull(id, "id");
+                Objects.requireNonNull(direction, "direction");
+            }
+        }
+
+        private static final class ForgeWirePacket {
+            private static final int MAX_WIRE_BYTES = 1_050_624;
+            private final byte[] wireBytes;
+
+            private ForgeWirePacket(final byte[] wireBytes) {
+                this.wireBytes = Objects.requireNonNull(wireBytes, "wireBytes").clone();
+                if (this.wireBytes.length > MAX_WIRE_BYTES) {
+                    throw new PortablePacketException("Portable packet wire payload exceeds " + MAX_WIRE_BYTES + " bytes");
+                }
+            }
+
+            private byte[] wireBytes() {
+                return wireBytes.clone();
+            }
+
+            private static void encode(final ForgeWirePacket packet, final FriendlyByteBuf buffer) {
+                buffer.writeByteArray(packet.wireBytes());
+            }
+
+            private static ForgeWirePacket decode(final FriendlyByteBuf buffer) {
+                return new ForgeWirePacket(buffer.readByteArray(MAX_WIRE_BYTES));
             }
         }
     }

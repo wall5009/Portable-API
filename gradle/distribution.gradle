@@ -361,7 +361,8 @@ def mavenRepositoryBundleFile = mavenRepositoryBundle.flatMap { it.archiveFile }
 tasks.register('assembleDistributionLayout') {
     group = 'distribution'
     description = 'Creates service-specific GitHub, CurseForge, Modrinth, Maven, and developer release folders.'
-    dependsOn 'check', 'validateGeneratedResources', 'verifyDistributionArtifacts', mavenRepositoryBundle
+    dependsOn 'check', 'validateGeneratedResources', 'runtimeAutomation', 'verifyDistributionArtifacts',
+            mavenRepositoryBundle
     outputs.dir releaseDirectory
     outputs.upToDateWhen { false }
     notCompatibleWithConfigurationCache(

@@ -30,8 +30,14 @@ import dev.portablemc.api.network.PortablePacketCodec;
 import dev.portablemc.api.network.PortablePacketReader;
 import dev.portablemc.api.network.PortablePacketType;
 import dev.portablemc.api.network.PortablePacketWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The entire shared implementation of the template mod.
@@ -44,6 +50,7 @@ import java.util.Map;
 public final class PortableTemplateMod implements PortableMod {
     /** Stable mod id used by every loader target. */
     public static final String MOD_ID = "portable_template";
+    private static final String CLIENT_SMOKE_MARKER = MOD_ID + "-client-smoke.ok";
 
     @Override
     public void initialize(final PortableModContext context) {
@@ -86,6 +93,47 @@ public final class PortableTemplateMod implements PortableMod {
         }));
         context.networking().registerServerToClient(pong, (packet, packetContext) ->
                 packetContext.execution().executeOnMainThread(() -> context.logger().info(packet.message())));
+        AtomicBoolean sentClientPing = new AtomicBoolean();
+        context.lifecycle().onClientTick(() -> {
+            if (sentClientPing.compareAndSet(false, true)) {
+                try {
+                    context.networking().sendToServer(ping, new PingPacket(1));
+                } catch (RuntimeException exception) {
+                    sentClientPing.set(false);
+                }
+            }
+        });
+        AtomicBoolean headlessClientSmokeCompleted = new AtomicBoolean();
+        context.lifecycle().onClientSetup(() -> {
+            if (Boolean.getBoolean("portable.api.headlessClientSmoke")) {
+                Thread watchdog = new Thread(() -> {
+                    try {
+                        Thread.sleep(120_000L);
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (headlessClientSmokeCompleted.compareAndSet(false, true)) {
+                        context.logger().error("Portable Template headless client smoke timed out before ticks fired.",
+                                new IllegalStateException("portable client ticks did not fire"));
+                        haltProcess(2);
+                    }
+                }, "Portable Template headless client smoke watchdog");
+                watchdog.setDaemon(true);
+                watchdog.start();
+            }
+        });
+        AtomicInteger headlessClientSmokeTicks = new AtomicInteger();
+        context.lifecycle().onClientTick(() -> {
+            if (Boolean.getBoolean("portable.api.headlessClientSmoke")
+                    && headlessClientSmokeTicks.incrementAndGet() >= 5
+                    && headlessClientSmokeCompleted.compareAndSet(false, true)) {
+                context.logger().info("Portable Template headless client smoke completed.");
+                if (!writeSmokeMarker(context.platform().configDirectory(), CLIENT_SMOKE_MARKER, "completed\n")) {
+                    haltProcess(2);
+                }
+                haltProcess(0);
+            }
+        });
 
         PortableCommandNode.Builder root = PortableCommandTree.literal("portable_template").requiresPermission(0);
         root.thenLiteral("status").executes(commandContext -> {
@@ -112,6 +160,37 @@ public final class PortableTemplateMod implements PortableMod {
         context.lifecycle().onServerStarting(server -> context.logger().info("Portable Template server starting at "
                 + server.worldDirectory()));
         context.lifecycle().onServerStarted(server -> context.logger().debug("Portable Template server started."));
+        AtomicBoolean dedicatedServerSmokeCompleted = new AtomicBoolean();
+        context.lifecycle().onServerStarted(server -> {
+            if (Boolean.getBoolean("portable.api.dedicatedServerSmoke")) {
+                context.logger().info("Portable Template dedicated-server smoke waiting for server ticks at "
+                        + server.worldDirectory());
+                Thread watchdog = new Thread(() -> {
+                    try {
+                        Thread.sleep(120_000L);
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (dedicatedServerSmokeCompleted.compareAndSet(false, true)) {
+                        context.logger().error("Portable Template dedicated-server smoke timed out before ticks fired.",
+                                new IllegalStateException("portable server ticks did not fire"));
+                        exitProcessAsync(2, "Portable Template dedicated-server smoke timeout exit");
+                    }
+                }, "Portable Template dedicated-server smoke watchdog");
+                watchdog.setDaemon(true);
+                watchdog.start();
+            }
+        });
+        AtomicInteger dedicatedServerSmokeTicks = new AtomicInteger();
+        context.lifecycle().onServerTick(server -> {
+            if (Boolean.getBoolean("portable.api.dedicatedServerSmoke")
+                    && dedicatedServerSmokeTicks.incrementAndGet() >= 5
+                    && dedicatedServerSmokeCompleted.compareAndSet(false, true)) {
+                context.logger().info("Portable Template dedicated-server smoke completed at "
+                        + server.worldDirectory());
+                exitProcessAsync(0, "Portable Template dedicated-server smoke exit");
+            }
+        });
         context.lifecycle().onServerStopping(server -> context.logger().debug("Portable Template server stopping."));
         context.lifecycle().onServerStopped(server -> context.logger().debug("Portable Template server stopped."));
         context.lifecycle().onReload(() -> context.logger().info("Portable Template reload hook fired."));
@@ -179,5 +258,24 @@ public final class PortableTemplateMod implements PortableMod {
                 return new PongPacket(reader.readString(96));
             }
         };
+    }
+
+    private static void exitProcessAsync(final int status, final String threadName) {
+        Thread exitThread = new Thread(() -> System.exit(status), threadName);
+        exitThread.start();
+    }
+
+    private static void haltProcess(final int status) {
+        Runtime.getRuntime().halt(status);
+    }
+
+    private static boolean writeSmokeMarker(final Path directory, final String fileName, final String content) {
+        try {
+            Files.createDirectories(directory);
+            Files.writeString(directory.resolve(fileName), content, StandardCharsets.UTF_8);
+            return true;
+        } catch (IOException exception) {
+            return false;
+        }
     }
 }

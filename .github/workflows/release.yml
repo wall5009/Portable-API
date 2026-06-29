@@ -47,8 +47,12 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Install headless client display support
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
       - name: Build complete distribution
-        run: ./gradlew clean fullDistributionBuild -PreleaseChannel=${{ inputs.release_channel }} --stacktrace
+        run: xvfb-run --auto-servernum ./gradlew clean fullDistributionBuild -PreleaseChannel=${{ inputs.release_channel }} --stacktrace --no-parallel
       - name: Publish API Maven modules
         if: ${{ !inputs.dry_run }}
         env:

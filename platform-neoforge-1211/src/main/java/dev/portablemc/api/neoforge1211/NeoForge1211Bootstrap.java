@@ -26,20 +26,32 @@ import dev.portablemc.api.content.PortableRegistryHandle;
 import dev.portablemc.api.internal.DefaultPortableModContext;
 import dev.portablemc.api.mc1211.Minecraft1211CommandAdapters;
 import dev.portablemc.api.mc1211.Minecraft1211Adapters;
+import dev.portablemc.api.network.PacketDirection;
+import dev.portablemc.api.network.PortableEncodedPacket;
 import dev.portablemc.api.network.PortableNetworkChannel;
+import dev.portablemc.api.network.PortablePacketContext;
+import dev.portablemc.api.network.PortablePacketException;
 import dev.portablemc.api.network.PortablePacketRegistration;
+import dev.portablemc.api.network.PortablePacketSender;
+import dev.portablemc.api.network.PortablePacketType;
 import dev.portablemc.api.network.PortableNetworking;
 import dev.portablemc.api.spi.PortableCommandAdapter;
 import dev.portablemc.api.spi.PortableContentAdapter;
 import dev.portablemc.api.spi.PortableNetworkingAdapter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.storage.LevelResource;
@@ -58,6 +70,9 @@ import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
@@ -121,6 +136,8 @@ public final class NeoForge1211Bootstrap {
         private final List<PortableCommand> commands = new ArrayList<>();
         private final List<PortableCommandTree> commandTrees = new ArrayList<>();
         private final List<PortablePacketRegistration<?>> packetRegistrations = new ArrayList<>();
+        private final Map<dev.portablemc.api.PortableIdentifier, CustomPacketPayload.Type<NeoForge1211PortablePayload>> payloadTypes =
+                new ConcurrentHashMap<>();
         private final java.util.Map<dev.portablemc.api.PortableIdentifier, Supplier<? extends Item>> itemSuppliers =
                 new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -134,8 +151,12 @@ public final class NeoForge1211Bootstrap {
 
         private void installEventBridges(final DefaultPortableModContext context, final IEventBus modEventBus) {
             modEventBus.addListener((FMLCommonSetupEvent event) -> context.lifecycle().fireCommonSetup());
-            modEventBus.addListener((FMLClientSetupEvent event) -> context.lifecycle().fireClientSetup());
+            modEventBus.addListener((FMLClientSetupEvent event) -> {
+                context.lifecycle().fireClientSetup();
+                NeoForge1211ClientBridge.install(context);
+            });
             modEventBus.addListener(this::onCreativeTab);
+            modEventBus.addListener(this::registerPayloadHandlers);
             NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
             NeoForge.EVENT_BUS.addListener((ServerStartingEvent event) ->
                     context.lifecycle().fireServerStarting(serverContext(event.getServer())));
@@ -209,7 +230,76 @@ public final class NeoForge1211Bootstrap {
         @Override
         public <T> void registerPacket(final PortablePacketRegistration<T> registration) {
             packetRegistrations.add(registration);
+            payloadTypes.put(registration.type().id(), NeoForge1211PortablePayload.type(registration));
             System.getLogger(modId).log(System.Logger.Level.DEBUG, "Registered portable packet " + registration.type().id());
+        }
+
+        @Override
+        public void sendToServer(final PortableEncodedPacket packet) {
+            if (packet.direction() != PacketDirection.CLIENT_TO_SERVER) {
+                throw new IllegalArgumentException("Packet " + packet.id() + " is not client-to-server");
+            }
+            CustomPacketPayload.Type<NeoForge1211PortablePayload> payloadType = payloadTypes.get(packet.id());
+            if (payloadType == null) {
+                throw new IllegalStateException("No NeoForge payload type registered for " + packet.id());
+            }
+            PacketDistributor.sendToServer(new NeoForge1211PortablePayload(payloadType, packet));
+        }
+
+        <T> void sendToPlayer(final ServerPlayer player, final PortablePacketType<T> type, final T packet) {
+            if (type.direction() != PacketDirection.SERVER_TO_CLIENT) {
+                throw new IllegalArgumentException("Packet " + type.id() + " is not server-to-client");
+            }
+            CustomPacketPayload.Type<NeoForge1211PortablePayload> payloadType = payloadTypes.get(type.id());
+            if (payloadType == null) {
+                throw new IllegalStateException("No NeoForge payload type registered for " + type.id());
+            }
+            PacketDistributor.sendToPlayer(player, NeoForge1211PortablePayload.encode(payloadType, type, packet));
+        }
+
+        private void registerPayloadHandlers(final RegisterPayloadHandlersEvent event) {
+            var registrar = event.registrar("1.1.0");
+            for (PortablePacketRegistration<?> registration : packetRegistrations) {
+                CustomPacketPayload.Type<NeoForge1211PortablePayload> payloadType = payloadTypes.get(registration.type().id());
+                if (registration.type().direction() == PacketDirection.CLIENT_TO_SERVER) {
+                    registrar.playToServer(
+                            payloadType,
+                            NeoForge1211PortablePayload.codec(payloadType, registration),
+                            (payload, context) -> handlePayload(registration, payload, context)
+                    );
+                } else {
+                    registrar.playToClient(
+                            payloadType,
+                            NeoForge1211PortablePayload.codec(payloadType, registration),
+                            (payload, context) -> handlePayload(registration, payload, context)
+                    );
+                }
+            }
+        }
+
+        private void handlePayload(
+                final PortablePacketRegistration<?> registration,
+                final NeoForge1211PortablePayload payload,
+                final IPayloadContext context
+        ) {
+            try {
+                PacketDirection expectedDirection = context.flow() == PacketFlow.SERVERBOUND
+                        ? PacketDirection.CLIENT_TO_SERVER : PacketDirection.SERVER_TO_CLIENT;
+                if (payload.packet().direction() != expectedDirection) {
+                    throw new PortablePacketException("Packet direction " + payload.packet().direction()
+                            + " does not match NeoForge reception direction " + context.flow());
+                }
+                Optional<PortablePacketSender> sender = context.player() instanceof ServerPlayer serverPlayer
+                        ? Optional.of(new NeoForgePacketSender(serverPlayer))
+                        : Optional.empty();
+                registration.dispatch(payload.packet(), new PortablePacketContext(
+                        expectedDirection,
+                        sender,
+                        work -> context.enqueueWork(work)
+                ));
+            } catch (PortablePacketException exception) {
+                System.getLogger(modId).log(System.Logger.Level.WARNING, "Rejected malformed portable packet", exception);
+            }
         }
 
         private void onCreativeTab(final BuildCreativeModeTabContentsEvent event) {
@@ -227,6 +317,29 @@ public final class NeoForge1211Bootstrap {
             }
             for (PortableCommandTree tree : commandTrees) {
                 dispatcher.register(Minecraft1211CommandAdapters.commandTree(tree));
+            }
+        }
+
+        private final class NeoForgePacketSender implements PortablePacketSender {
+            private final ServerPlayer player;
+
+            private NeoForgePacketSender(final ServerPlayer player) {
+                this.player = Objects.requireNonNull(player, "player");
+            }
+
+            @Override
+            public Optional<UUID> playerId() {
+                return Optional.of(player.getUUID());
+            }
+
+            @Override
+            public Optional<String> displayName() {
+                return Optional.of(player.getDisplayName().getString());
+            }
+
+            @Override
+            public <T> void send(final PortablePacketType<T> type, final T packet) {
+                sendToPlayer(player, type, packet);
             }
         }
     }

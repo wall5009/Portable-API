@@ -9,6 +9,8 @@
 .\gradlew.bat releaseBuild
 ```
 
+`fullDistributionBuild` depends on `runtimeAutomation`, so GameTest, dedicated-server smoke, and headless client validation must pass before release folders are assembled.
+
 ## Output Layout
 
 - `github/`: release notes, checksums, and the four API runtime jars.

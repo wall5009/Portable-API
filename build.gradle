@@ -235,6 +235,64 @@ tasks.register('check') {
     dependsOn 'checkApiCompatibility'
 }
 
+def templateRuntimeTaskPaths = [
+        fabric1201  : [
+                gameTest   : ':template-fabric-1201:runGameTestServer',
+                serverSmoke: ':template-fabric-1201:runServerSmoke',
+                clientSmoke: ':template-fabric-1201:runClientSmoke'
+        ],
+        forge1201   : [
+                gameTest   : ':template-forge-1201:runGameTestServer',
+                serverSmoke: ':template-forge-1201:runServerSmoke',
+                clientSmoke: ':template-forge-1201:runClientSmoke'
+        ],
+        fabric1211  : [
+                gameTest   : ':template-fabric-1211:runGameTestServer',
+                serverSmoke: ':template-fabric-1211:runServerSmoke',
+                clientSmoke: ':template-fabric-1211:runClientSmoke'
+        ],
+        neoforge1211: [
+                gameTest   : ':template-neoforge-1211:runGameTestServer',
+                serverSmoke: ':template-neoforge-1211:runServerSmoke',
+                clientSmoke: ':template-neoforge-1211:runClientSmoke'
+        ]
+]
+
+def orderedRuntimeTasks = templateRuntimeTaskPaths.values()
+        .collectMany { [it.gameTest, it.serverSmoke, it.clientSmoke] }
+
+tasks.register('runLoaderGameTests') {
+    group = 'verification'
+    description = 'Runs native GameTest server automation for all four template targets.'
+    dependsOn templateRuntimeTaskPaths.values().collect { it.gameTest }
+}
+
+tasks.register('runDedicatedServerSmokeTests') {
+    group = 'verification'
+    description = 'Launches every dedicated-server template target and exits after portable server ticks fire.'
+    dependsOn templateRuntimeTaskPaths.values().collect { it.serverSmoke }
+}
+
+tasks.register('runHeadlessClientValidation') {
+    group = 'verification'
+    description = 'Launches every template client and exits after portable client ticks fire.'
+    dependsOn templateRuntimeTaskPaths.values().collect { it.clientSmoke }
+}
+
+tasks.register('runtimeAutomation') {
+    group = 'verification'
+    description = 'Runs GameTest, dedicated-server smoke, and headless client validation for all loader targets.'
+    dependsOn 'runLoaderGameTests', 'runDedicatedServerSmokeTests', 'runHeadlessClientValidation'
+}
+
+gradle.projectsEvaluated {
+    orderedRuntimeTasks.eachWithIndex { taskPath, index ->
+        if (index > 0) {
+            tasks.getByPath(taskPath).mustRunAfter(tasks.getByPath(orderedRuntimeTasks[index - 1]))
+        }
+    }
+}
+
 tasks.register('validateGeneratedResources') {
     group = 'verification'
     description = 'Ensures generated template resource files exist after the template resource task runs.'

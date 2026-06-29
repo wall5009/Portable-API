@@ -22,11 +22,11 @@ Read values from `handle.snapshot()`.
 
 ## Networking
 
-Replace channel-only declarations with `PortablePacketType<T>` and `PortablePacketCodec<T>` when the packet can use the portable bounded codec.
+Replace channel-only declarations with `PortablePacketType<T>` and `PortablePacketCodec<T>` when the packet can use the portable bounded codec. v1.1 wires the portable C2S and single-player S2C packet contract through Fabric 1.20.1, Fabric 1.21.1, Forge 1.20.1, and NeoForge 1.21.1 native payload APIs.
 
 ## Lifecycle
 
-Existing setup and server-starting callbacks remain. v1.1 adds server-started, stopping, stopped, server tick, and reload hooks. The core client-tick event surface remains present, but v1.1 does not wire it as a dedicated-server-safe portable bridge across all targets.
+Existing setup and server-starting callbacks remain. v1.1 adds server-started, stopping, stopped, server tick, client tick, and reload hooks. Client tick is wired by client-only loader bridges; keep client-only classes out of dedicated-server code paths.
 
 ## License
 

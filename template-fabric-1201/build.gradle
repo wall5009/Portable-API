@@ -9,10 +9,31 @@ loom {
             configName = 'Template Fabric 1.20.1 Client'
             runDir = 'runs/template-fabric-1201-client'
         }
+        clientSmoke {
+            client()
+            configName = 'Template Fabric 1.20.1 Headless Client Smoke'
+            runDir = 'runs/template-fabric-1201-client-smoke'
+            vmArg '-Dportable.api.headlessClientSmoke=true'
+        }
         server {
             server()
             configName = 'Template Fabric 1.20.1 Server'
             runDir = 'runs/template-fabric-1201-server'
+        }
+        serverSmoke {
+            server()
+            configName = 'Template Fabric 1.20.1 Dedicated Server Smoke'
+            runDir = 'runs/template-fabric-1201-server-smoke'
+            vmArg '-Dportable.api.dedicatedServerSmoke=true'
+            programArg '--nogui'
+        }
+        gameTestServer {
+            server()
+            configName = 'Template Fabric 1.20.1 GameTest Server'
+            runDir = 'runs/template-fabric-1201-gametest'
+            vmArg '-Dfabric-api.gametest'
+            vmArg '-Dfabric-api.gametest.report-file=build/gametest/fabric-1201.xml'
+            programArg '--nogui'
         }
     }
 }
@@ -22,7 +43,9 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${providers.gradleProperty('fabric_loader').get()}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty('fabric_api_1201').get()}"
-    implementation project(':platform-fabric-1201')
+    modImplementation(project(path: ':platform-fabric-1201', configuration: 'namedElements')) {
+        transitive = false
+    }
     implementation project(':template-common')
 }
 
@@ -62,4 +85,18 @@ tasks.named('processResources') {
 tasks.named('jar') {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from project(':template-common').sourceSets.main.output
+}
+
+['runClient', 'runClientSmoke', 'runServer', 'runServerSmoke', 'runGameTestServer'].each { runTaskName ->
+    tasks.named(runTaskName) {
+        dependsOn ':platform-fabric-1201:remapJar', ':template-common:jar'
+    }
+}
+
+tasks.named('runServerSmoke') {
+    doFirst {
+        def runDirectory = file('runs/template-fabric-1201-server-smoke')
+        runDirectory.mkdirs()
+        new File(runDirectory, 'eula.txt').setText('eula=true\n', 'UTF-8')
+    }
 }

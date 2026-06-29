@@ -15,6 +15,9 @@
     ],
     "client": [
       "dev.portablemc.template.fabric1211.TemplateFabric1211Entrypoint"
+    ],
+    "fabric-gametest": [
+      "dev.portablemc.template.fabric1211.TemplateFabric1211GameTests"
     ]
   },
   "depends": {

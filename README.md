@@ -29,10 +29,10 @@ The template modules are developer scaffolding and release-test artifacts, not p
 
 - API stability annotations: public, experimental, internal, and since-version markers.
 - API compatibility check against `config/api/v1.0.0-api.txt`.
-- Bounded typed packet codecs and registration contracts.
+- Bounded typed packet codecs, registration contracts, and native C2S/S2C payload bridges.
 - Typed config files with validation, immutable snapshots, recovery, atomic save, and reload listeners.
 - Portable command trees with nested literals, typed arguments, source feedback, and suggestions.
-- Expanded lifecycle hooks for setup, server start/stop, ticks, reload, data generation.
+- Expanded lifecycle hooks for setup, server start/stop, server ticks, client ticks, reload, data generation.
 - Structured deterministic resource builders for common language, model, blockstate, tag, recipe, loot, and pack metadata JSON.
 - Platform service queries for loader, version, side, paths, mod-loaded checks, optional mod versions, and development detection.
 - All Rights Reserved licensing with a narrow template scaffold permission in `LICENSE`.
@@ -45,6 +45,7 @@ Gradle must run on Java 21 because the pinned Loom plugin requires it. The build
 $env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot'
 $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 .\gradlew.bat check
+.\gradlew.bat runtimeAutomation
 .\gradlew.bat fullDistributionBuild
 ```
 

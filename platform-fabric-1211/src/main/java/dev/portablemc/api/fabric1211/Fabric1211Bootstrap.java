@@ -26,8 +26,14 @@ import dev.portablemc.api.content.PortableRegistryHandle;
 import dev.portablemc.api.internal.DefaultPortableModContext;
 import dev.portablemc.api.mc1211.Minecraft1211CommandAdapters;
 import dev.portablemc.api.mc1211.Minecraft1211Adapters;
+import dev.portablemc.api.network.PacketDirection;
+import dev.portablemc.api.network.PortableEncodedPacket;
 import dev.portablemc.api.network.PortableNetworkChannel;
+import dev.portablemc.api.network.PortablePacketContext;
+import dev.portablemc.api.network.PortablePacketException;
 import dev.portablemc.api.network.PortablePacketRegistration;
+import dev.portablemc.api.network.PortablePacketSender;
+import dev.portablemc.api.network.PortablePacketType;
 import dev.portablemc.api.network.PortableNetworking;
 import dev.portablemc.api.spi.PortableCommandAdapter;
 import dev.portablemc.api.spi.PortableContentAdapter;
@@ -38,16 +44,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
@@ -58,6 +69,7 @@ import net.minecraft.world.level.storage.LevelResource;
  */
 public final class Fabric1211Bootstrap {
     private static final Map<String, DefaultPortableModContext> CONTEXTS = new ConcurrentHashMap<>();
+    private static final Map<String, FabricRuntime> RUNTIMES = new ConcurrentHashMap<>();
 
     private Fabric1211Bootstrap() {
     }
@@ -76,6 +88,7 @@ public final class Fabric1211Bootstrap {
         mod.initialize(context);
         context.lifecycle().fireCommonSetup();
         CONTEXTS.put(modId, context);
+        RUNTIMES.put(modId, runtime);
     }
 
     /**
@@ -89,6 +102,7 @@ public final class Fabric1211Bootstrap {
             throw new IllegalStateException("Portable API client setup ran before common initialization for " + modId);
         }
         context.lifecycle().fireClientSetup();
+        Fabric1211ClientBridge.install(context, RUNTIMES.get(modId));
     }
 
     private static DefaultPortableModContext createContext(final String modId, final FabricRuntime runtime) {
@@ -121,12 +135,17 @@ public final class Fabric1211Bootstrap {
         );
     }
 
-    private static final class FabricRuntime implements PortableContentAdapter, PortableCommandAdapter, PortableNetworkingAdapter {
+    static final class FabricRuntime implements PortableContentAdapter, PortableCommandAdapter, PortableNetworkingAdapter {
         private final String modId;
         private final Map<dev.portablemc.api.PortableIdentifier, Item> items = new ConcurrentHashMap<>();
         private final List<PortableCommand> commands = new ArrayList<>();
         private final List<PortableCommandTree> commandTrees = new ArrayList<>();
         private final List<PortablePacketRegistration<?>> packetRegistrations = new ArrayList<>();
+        private final Map<dev.portablemc.api.PortableIdentifier, CustomPacketPayload.Type<Fabric1211PortablePayload>> payloadTypes =
+                new ConcurrentHashMap<>();
+        private boolean serverStartingFired;
+        private boolean serverStartedFired;
+        private boolean serverStoppingFired;
 
         private FabricRuntime(final String modId) {
             this.modId = Objects.requireNonNull(modId, "modId");
@@ -134,11 +153,60 @@ public final class Fabric1211Bootstrap {
 
         private void installEventBridges(final DefaultPortableModContext context) {
             CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> registerCommands(dispatcher));
-            ServerLifecycleEvents.SERVER_STARTING.register(server -> context.lifecycle().fireServerStarting(serverContext(server)));
-            ServerLifecycleEvents.SERVER_STARTED.register(server -> context.lifecycle().fireServerStarted(serverContext(server)));
-            ServerLifecycleEvents.SERVER_STOPPING.register(server -> context.lifecycle().fireServerStopping(serverContext(server)));
-            ServerLifecycleEvents.SERVER_STOPPED.register(server -> context.lifecycle().fireServerStopped(serverContext(server)));
-            ServerTickEvents.END_SERVER_TICK.register(server -> context.lifecycle().fireServerTick(serverContext(server)));
+            ServerLifecycleEvents.SERVER_STARTING.register(server -> fireServerStarting(context, server));
+            ServerLifecycleEvents.SERVER_STARTED.register(server -> ensureServerStarted(context, server));
+            ServerLifecycleEvents.SERVER_STOPPING.register(server -> ensureServerStopping(context, server));
+            ServerLifecycleEvents.SERVER_STOPPED.register(server -> fireServerStopped(context, server));
+            ServerTickEvents.END_SERVER_TICK.register(server -> {
+                ensureServerStarted(context, server);
+                context.lifecycle().fireServerTick(serverContext(server));
+            });
+        }
+
+        private synchronized void fireServerStarting(
+                final DefaultPortableModContext context,
+                final MinecraftServer server
+        ) {
+            if (!serverStartingFired) {
+                serverStartingFired = true;
+                serverStoppingFired = false;
+                context.lifecycle().fireServerStarting(serverContext(server));
+            }
+        }
+
+        private synchronized void ensureServerStarted(
+                final DefaultPortableModContext context,
+                final MinecraftServer server
+        ) {
+            fireServerStarting(context, server);
+            if (!serverStartedFired) {
+                serverStartedFired = true;
+                context.lifecycle().fireServerStarted(serverContext(server));
+            }
+        }
+
+        private synchronized void ensureServerStopping(
+                final DefaultPortableModContext context,
+                final MinecraftServer server
+        ) {
+            if (serverStartedFired && !serverStoppingFired) {
+                serverStoppingFired = true;
+                context.lifecycle().fireServerStopping(serverContext(server));
+            }
+        }
+
+        private synchronized void fireServerStopped(
+                final DefaultPortableModContext context,
+                final MinecraftServer server
+        ) {
+            if (!serverStartedFired) {
+                return;
+            }
+            ensureServerStopping(context, server);
+            context.lifecycle().fireServerStopped(serverContext(server));
+            serverStartingFired = false;
+            serverStartedFired = false;
+            serverStoppingFired = false;
         }
 
         private static PortableServerContext serverContext(final MinecraftServer server) {
@@ -197,7 +265,86 @@ public final class Fabric1211Bootstrap {
         @Override
         public <T> void registerPacket(final PortablePacketRegistration<T> registration) {
             packetRegistrations.add(registration);
+            CustomPacketPayload.Type<Fabric1211PortablePayload> payloadType = Fabric1211PortablePayload.type(registration);
+            payloadTypes.put(registration.type().id(), payloadType);
+            if (registration.type().direction() == PacketDirection.CLIENT_TO_SERVER) {
+                PayloadTypeRegistry.playC2S().register(payloadType, Fabric1211PortablePayload.codec(payloadType, registration));
+                registerServerReceiver(registration, payloadType);
+            } else {
+                PayloadTypeRegistry.playS2C().register(payloadType, Fabric1211PortablePayload.codec(payloadType, registration));
+            }
             System.getLogger(modId).log(System.Logger.Level.DEBUG, "Registered portable packet " + registration.type().id());
+        }
+
+        @Override
+        public void sendToServer(final PortableEncodedPacket packet) {
+            Fabric1211ClientBridge.sendToServer(packet);
+        }
+
+        List<PortablePacketRegistration<?>> packetRegistrations() {
+            return List.copyOf(packetRegistrations);
+        }
+
+        CustomPacketPayload.Type<Fabric1211PortablePayload> payloadType(final PortablePacketRegistration<?> registration) {
+            return payloadTypes.get(registration.type().id());
+        }
+
+        <T> void sendToPlayer(final ServerPlayer player, final PortablePacketType<T> type, final T packet) {
+            if (type.direction() != PacketDirection.SERVER_TO_CLIENT) {
+                throw new IllegalArgumentException("Packet " + type.id() + " is not server-to-client");
+            }
+            CustomPacketPayload.Type<Fabric1211PortablePayload> payloadType = payloadTypes.get(type.id());
+            if (payloadType == null) {
+                throw new IllegalStateException("No Fabric payload type registered for " + type.id());
+            }
+            ServerPlayNetworking.send(player, Fabric1211PortablePayload.encode(payloadType, type, packet));
+        }
+
+        private <T> void registerServerReceiver(
+                final PortablePacketRegistration<T> registration,
+                final CustomPacketPayload.Type<Fabric1211PortablePayload> payloadType
+        ) {
+            boolean registered = ServerPlayNetworking.registerGlobalReceiver(payloadType, (payload, networkContext) -> {
+                try {
+                    registration.dispatch(payload.packet(), new PortablePacketContext(
+                            PacketDirection.CLIENT_TO_SERVER,
+                            Optional.of(new FabricServerPacketSender(networkContext.player())),
+                            networkContext.server()::execute
+                    ));
+                } catch (PortablePacketException exception) {
+                    System.getLogger(modId).log(
+                            System.Logger.Level.WARNING,
+                            "Rejected malformed portable packet " + registration.type().id(),
+                            exception
+                    );
+                }
+            });
+            if (!registered) {
+                throw new IllegalStateException("Duplicate Fabric server packet receiver for " + registration.type().id());
+            }
+        }
+
+        private final class FabricServerPacketSender implements PortablePacketSender {
+            private final ServerPlayer player;
+
+            private FabricServerPacketSender(final ServerPlayer player) {
+                this.player = Objects.requireNonNull(player, "player");
+            }
+
+            @Override
+            public Optional<UUID> playerId() {
+                return Optional.of(player.getUUID());
+            }
+
+            @Override
+            public Optional<String> displayName() {
+                return Optional.of(player.getDisplayName().getString());
+            }
+
+            @Override
+            public <T> void send(final PortablePacketType<T> type, final T packet) {
+                sendToPlayer(player, type, packet);
+            }
         }
 
         private void registerCommands(final CommandDispatcher<CommandSourceStack> dispatcher) {
